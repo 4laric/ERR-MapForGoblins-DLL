@@ -55,6 +55,11 @@ namespace goblin
     // no live hide/cleared flag set). Empty when no focus is active.
     std::vector<HighlightPoint> focus_highlight_points();
 
+
+    struct APStylePoint { HighlightPoint point; uint8_t style = 0; };
+    // Snapshot of AP-requested halos for already-visible, unambiguous lot markers.
+    // Empty when the client snapshot is missing, expired, or map injection is inactive.
+    const std::vector<APStylePoint> &ap_style_points();
     // Original (pre-remap) row ids of injected markers whose icon is currently HIDDEN
     // for any reason (collected / kindling / manually hidden / a live disable or cleared
     // flag is set). The region-progress tab counts these as done. Reads the LIVE rows so

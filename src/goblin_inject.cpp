@@ -85,6 +85,8 @@ struct CategoryRow
     int32_t region_id;       // progress region PlaceName id (goblin::progress::region_place_id) for focus
     int32_t baked_text1;     // textId1 as baked (restored when focus removes a fabricated label)
     bool baked_notext;       // isEnableNoText as baked (restored after focus force-show)
+    uint32_t lot_id = 0;
+    uint8_t lot_type = 0;
     bool focus_text;         // true while focus fabricated a label on a textless row
 };
 
@@ -562,6 +564,69 @@ std::vector<goblin::HighlightPoint> goblin::focus_highlight_points()
     return out;
 }
 
+
+// Only copied positions survive between frames. No game row pointer is cached.
+const std::vector<goblin::APStylePoint>& goblin::ap_style_points()
+{
+    static std::vector<APStylePoint> points;
+    static uint64_t last_refresh = 0, last_generation = 0;
+    const auto now = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count());
+    const auto snapshot = ap::cache().active_lot_styles(now);
+    if (!g_param_injection_active || !snapshot)
+    {
+        points.clear();
+        last_generation = 0;
+        return points;
+    }
+    if (snapshot->generation == last_generation && now >= last_refresh && now - last_refresh < 100)
+        return points;
+    last_generation = snapshot->generation;
+    last_refresh = now;
+    points.clear();
+    // Bounded to ten scans/second while enabled. Cheap lot membership precedes flag reads.
+    std::unordered_map<uint64_t, uint32_t> styles;
+    for (const auto& entry : snapshot->entries)
+        styles.emplace((static_cast<uint64_t>(entry.lot_table) << 32) | entry.lot_row, entry.style);
+    std::unordered_map<uint64_t, size_t> multiplicity;
+    for (const auto& cr : g_category_rows)
+    {
+        const uint64_t key = (static_cast<uint64_t>(cr.lot_type) << 32) | cr.lot_id;
+        if (styles.contains(key)) ++multiplicity[key];
+    }
+    for (const auto& cr : g_category_rows)
+    {
+        const uint64_t key = (static_cast<uint64_t>(cr.lot_type) << 32) | cr.lot_id;
+        const auto style = styles.find(key);
+        if (style == styles.end() || multiplicity[key] != 1 || !cr.p) continue;
+        const bool eligible = g_focus_category >= 0
+            ? static_cast<int>(cr.cat) == g_focus_category && cr.region_id == g_focus_region
+            : is_category_enabled(cr.cat);
+        if (!eligible || cr.p->disableParam_NT ||
+            (cr.p->eventFlagId && !flag_is_set(cr.p->eventFlagId)) ||
+            row_is_hidden(cr) || row_group2_gate_off(cr.p))
+            continue;
+        unsigned* enabled[8];
+        enable_flag_ptrs(cr.p, enabled);
+        bool blocked = false;
+        for (const auto* flag : enabled)
+            if (*flag && !flag_is_set(*flag)) { blocked = true; break; }
+        if (blocked) continue;
+        // Textless entries dropped by the game must not get a floating ring.
+        if (!cr.p->isEnableNoText && cr.p->textId1 <= 0 && cr.p->textId2 <= 0 &&
+            cr.p->textId3 <= 0 && cr.p->textId4 <= 0 && cr.p->textId5 <= 0 &&
+            cr.p->textId6 <= 0 && cr.p->textId7 <= 0 && cr.p->textId8 <= 0)
+            continue;
+        APStylePoint point{};
+        if (row_marker_info(cr.p, point.point))
+        {
+            point.style = static_cast<uint8_t>(style->second);
+            points.push_back(point);
+        }
+    }
+    return points;
+}
+
 std::unordered_set<uint64_t> goblin::hidden_marker_original_ids()
 {
     std::unordered_set<uint64_t> out;
@@ -840,6 +905,8 @@ void goblin::inject_map_entries()
             CategoryRow cr{};
             cr.p = wp;
             cr.cat = all_rows[i].category;
+            cr.lot_id = all_rows[i].lotId;
+            cr.lot_type = all_rows[i].lotType;
             cr.row_id = static_cast<uint64_t>(all_rows[i].row_id);
             cr.original_row_id = all_rows[i].original_row_id;
             cr.baked_cleared = wp->clearedEventFlagId;
