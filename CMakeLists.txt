@@ -40,7 +40,7 @@ set(SPDLOG_DISABLE_DEFAULT_LOGGER ON)
 set(SPDLOG_USE_STD_FORMAT ON)
 FetchContent_Declare(spdlog
   GIT_REPOSITORY        https://github.com/gabime/spdlog.git
-  GIT_TAG               v1.13.0)
+  GIT_TAG               7c02e204c92545f869e2f04edaab1f19fe8b19fd)
 
 # Dear ImGui (in-game config overlay). Source-only: we compile the core + the
 # DX11/Win32 backends into the DLL below (the overlay renders in its own D3D11 +
@@ -57,13 +57,13 @@ FetchContent_Declare(imgui
 # its sources straight into MapForGoblins - see below.
 FetchContent_Declare(miniz
   GIT_REPOSITORY        https://github.com/richgel999/miniz.git
-  GIT_TAG               3.0.2)
+  GIT_TAG               293d4db1b7d0ffee9756d035b9ac6f7431ef8492)
 
 # stb_image: single-header PNG decoder for the dev "Icon Preview" tool (load a png off disk into an
 # RGBA texture). Download only; we #define STB_IMAGE_IMPLEMENTATION in goblin_overlay.cpp.
 FetchContent_Declare(stb
   GIT_REPOSITORY        https://github.com/nothings/stb.git
-  GIT_TAG               master)
+  GIT_TAG               2c980bb59875b0d32144a71867fbdebb2f77cd20)
 
 # Set iterator debug level to 0 for ELDEN RING ABI compatibility
 add_definitions(-D_ITERATOR_DEBUG_LEVEL=0)
@@ -93,6 +93,9 @@ add_library(mini INTERFACE)
 target_include_directories(mini INTERFACE ${mini_SOURCE_DIR}/src)
 
 add_library( MapForGoblins SHARED
+  include/mfg_ap_readonly_v1.h
+  src/goblin_ap_cache.hpp
+  src/goblin_ap_api.cpp
   src/from/params.hpp
   src/from/params.cpp
   src/from/paramdef/WORLD_MAP_POINT_PARAM_ST.hpp
@@ -237,12 +240,12 @@ if(GENERATED_SUBDIR STREQUAL "generated")
 else()
   string(REPLACE "generated_" "" BUILD_NAME "${GENERATED_SUBDIR}")
 endif()
-execute_process(COMMAND git -C "${CMAKE_SOURCE_DIR}" rev-parse --short HEAD
+execute_process(COMMAND git -c "safe.directory=${CMAKE_SOURCE_DIR}" -C "${CMAKE_SOURCE_DIR}" rev-parse --short HEAD
                 OUTPUT_VARIABLE GIT_HASH OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
 if(NOT GIT_HASH)
   set(GIT_HASH "nogit")
 else()
-  execute_process(COMMAND git -C "${CMAKE_SOURCE_DIR}" diff --quiet HEAD
+  execute_process(COMMAND git -c "safe.directory=${CMAKE_SOURCE_DIR}" -C "${CMAKE_SOURCE_DIR}" diff --quiet HEAD
                   RESULT_VARIABLE _git_dirty ERROR_QUIET)
   if(_git_dirty)
     set(GIT_HASH "${GIT_HASH}-dirty")

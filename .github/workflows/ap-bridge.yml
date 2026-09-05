@@ -1,0 +1,44 @@
+name: Read-only AP bridge
+on:
+  push:
+    branches: [master]
+  pull_request:
+concurrency:
+  group: ap-bridge-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  copied-snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile and exercise ABI, lifecycle and concurrent copies
+        run: |
+          g++ -std=c++20 -Wall -Wextra -Werror -pthread -fsanitize=address,undefined \
+            tests/ap_cache_test.cpp src/goblin_ap_api.cpp -o /tmp/ap-cache-test
+          /tmp/ap-cache-test
+      - name: Check baseline input inventory
+        run: python3 -m unittest discover -s tools -p test_baseline_manifest.py -v
+  windows-compile-only:
+    # Public ERR-generated tables exercise compilation only. They are not the
+    # vanilla/AP runtime data and no DLL from this job is published.
+    runs-on: windows-2022
+    env:
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Generate shared art from committed inputs
+        shell: pwsh
+        run: |
+          python -m pip install pillow==12.3.0 cmake==3.31.6
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          foreach ($generator in @("generate_logo", "generate_map_icons", "generate_overlay_icons", "generate_i18n")) {
+            python "tools/$generator.py"
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          }
+      - name: Configure compile-only profile
+        run: cmake -S . -B builds/ci-compile -G "Visual Studio 17 2022" -A x64 -DGENERATED_SUBDIR=generated
+      - name: Compile complete source and link
+        run: cmake --build builds/ci-compile --config Release --parallel 2

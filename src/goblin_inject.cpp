@@ -1,4 +1,5 @@
 #include "goblin_inject.hpp"
+#include "goblin_ap_cache.hpp"
 #include "goblin_collected.hpp"
 #include "goblin_kindling.hpp"
 #include "goblin_logic.hpp"
@@ -594,6 +595,8 @@ bool goblin::prune_focus_if_empty()
 
 void goblin::inject_map_entries()
 {
+    ap::cache().invalidate_rows();
+    std::vector<ap::MarkerIdentity> ap_rows;
     // (The CSFreeListMemorySystem int3-assert NOP patch that used to run here
     // was removed 2026-05-29: it was an artifact of the old hosting-crash
     // theory. The real cause was the 16-align bug in the wrapper_row_locator
@@ -850,6 +853,9 @@ void goblin::inject_map_entries()
             enable_flag_ptrs(wp, en);
             for (int k = 0; k < 8; ++k) cr.baked_enable[k] = *en[k];
             g_category_rows.push_back(cr);
+            ap_rows.push_back({reinterpret_cast<uintptr_t>(wp),
+                               static_cast<uint64_t>(i + 1),
+                               all_rows[i].lotType, all_rows[i].lotId});
             if (!is_category_enabled(all_rows[i].category))
                 // Gate EVERY text line behind a never-set flag -> icon hidden
                 // (the engine hides the icon only once all text lines - item,
@@ -1002,6 +1008,10 @@ void goblin::inject_map_entries()
     file_ptr_ref = new_param_file;
     file_size_ref = static_cast<int64_t>(param_file_size);
     g_param_injection_active = true;
+    const bool ap_ready = ap::cache().install_rows(ap_rows);
+    ap::cache().set_active(true);
+    spdlog::info("[ap-map] copied marker registry {} ({} rows); waiting for hover hook",
+                 ap_ready ? "ready" : "unavailable", ap_rows.size());
 
     spdlog::debug("Map entries complete: {} total rows", total_rows);
 }
@@ -1267,6 +1277,7 @@ void goblin::set_param_injection_active(bool active)
         *g_file_size_ref = g_vanilla_param_size;
     }
     g_param_injection_active = active;
+    ap::cache().set_active(active);
     spdlog::info("[TOGGLE] WorldMapPointParam -> {}", active ? "EXPANDED" : "VANILLA");
 }
 

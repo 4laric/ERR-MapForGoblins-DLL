@@ -164,3 +164,10 @@ CHANGELOG.txt
 # secret VT API key (.vt_key) and a regenerable local SQLite DB, so the whole dir
 # stays out of git for now. Re-track the source once the dashboard is done.
 tools/dashboard/
+
+# Restricted build-local Oodle dependency, never distributed.
+tools/oo2core_*.dll
+tools/lib/oo2core_*.dll
+
+# Local baseline input manifests, experimental DLLs and offline audit outputs.
+.scratch/
