@@ -240,12 +240,12 @@ if(GENERATED_SUBDIR STREQUAL "generated")
 else()
   string(REPLACE "generated_" "" BUILD_NAME "${GENERATED_SUBDIR}")
 endif()
-execute_process(COMMAND git -C "${CMAKE_SOURCE_DIR}" rev-parse --short HEAD
+execute_process(COMMAND git -c "safe.directory=${CMAKE_SOURCE_DIR}" -C "${CMAKE_SOURCE_DIR}" rev-parse --short HEAD
                 OUTPUT_VARIABLE GIT_HASH OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
 if(NOT GIT_HASH)
   set(GIT_HASH "nogit")
 else()
-  execute_process(COMMAND git -C "${CMAKE_SOURCE_DIR}" diff --quiet HEAD
+  execute_process(COMMAND git -c "safe.directory=${CMAKE_SOURCE_DIR}" -C "${CMAKE_SOURCE_DIR}" diff --quiet HEAD
                   RESULT_VARIABLE _git_dirty ERROR_QUIET)
   if(_git_dirty)
     set(GIT_HASH "${GIT_HASH}-dirty")
