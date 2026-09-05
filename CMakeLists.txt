@@ -93,6 +93,9 @@ add_library(mini INTERFACE)
 target_include_directories(mini INTERFACE ${mini_SOURCE_DIR}/src)
 
 add_library( MapForGoblins SHARED
+  include/mfg_ap_readonly_v1.h
+  src/goblin_ap_cache.hpp
+  src/goblin_ap_api.cpp
   src/from/params.hpp
   src/from/params.cpp
   src/from/paramdef/WORLD_MAP_POINT_PARAM_ST.hpp

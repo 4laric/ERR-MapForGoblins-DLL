@@ -10,6 +10,7 @@
 // *(item+0x248) (live-confirmed: row+0x30 holds our offset-encoded textId). We publish
 // that row ptr; the inject layer matches it to one of our CategoryRow::p.
 #include "goblin_maphover.hpp"
+#include "goblin_ap_cache.hpp"
 
 #include "modutils.hpp"
 
@@ -18,6 +19,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <chrono>
 
 namespace
 {
@@ -45,6 +47,7 @@ namespace
 
     void *build_detour(void *owner, void *ctx, void *a, void *b)
     {
+        goblin::ap::cache().map_rebuild();
         g_map_owner.store(owner, std::memory_order_relaxed);
         // ctx = dialogData. The displayed map id lives at *(int*)(dialogData+8) and its top
         // byte is the area (60=overworld, 12=underground, 61=DLC) - it updates live on layer
@@ -74,6 +77,10 @@ namespace
                 row = *reinterpret_cast<void **>(reinterpret_cast<uint8_t *>(item) + PIN_ROW_OFF);
         }
         g_hovered_row.store(row, std::memory_order_relaxed);
+        const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        goblin::ap::cache().observe(reinterpret_cast<uintptr_t>(row),
+                                    static_cast<uint64_t>(now));
 
         // Publish the WorldMapArea (r8) if its vtable matches; it drives the projection.
         void *area = nullptr;
@@ -98,6 +105,8 @@ namespace
 
 void goblin::maphover::setup()
 {
+    ap::cache().set_hooks_ready(false);
+    bool hover_armed = false, rebuild_armed = false;
     // Resolve the two vtable gates by AOB (each from its vtable's ctor `lea rax,[rip+vt]`),
     // so a game update that moves the vtable doesn't silently misgate. relative_offsets
     // {{3,7}} yields the lea target = the vtable address. A miss leaves the gate 0.
@@ -128,6 +137,7 @@ void goblin::maphover::setup()
                     "48 C7 45 B7 FE FF FF FF 48 89 9C 24 08 01 00 00 48 8B 05 ?? ?? ?? ?? "
                     "48 33 C4 48 89 45 1F 49 8B F8"},
             placename_detour, o_placename);
+        hover_armed = true;
         spdlog::info("[maphover] hover hook armed @ 0x{:X}", reinterpret_cast<uintptr_t>(fn));
     }
     catch (const std::exception &e)
@@ -140,12 +150,18 @@ void goblin::maphover::setup()
             {.aob = "40 55 53 56 57 41 54 41 56 41 57 48 8B EC 48 83 EC 60 48 C7 45 D0 FE FF "
                     "FF FF 4C 8B F9 8B 42 34"},
             build_detour, o_build);
+        rebuild_armed = true;
         spdlog::info("[maphover] buildMarkers hook armed @ 0x{:X}", reinterpret_cast<uintptr_t>(bf));
     }
     catch (const std::exception &e)
     {
         spdlog::error("[maphover] buildMarkers hook failed (layer pin list disabled): {}", e.what());
     }
+    const bool ready = hover_armed && rebuild_armed && g_pin_vt;
+    ap::cache().set_hooks_ready(ready);
+    spdlog::info("[ap-map] read-only hover bridge {}",
+                 ready ? "armed; game behavior still requires validation" :
+                         "unavailable: required hover/rebuild hook missing");
 }
 
 void *goblin::maphover::hovered_row()
