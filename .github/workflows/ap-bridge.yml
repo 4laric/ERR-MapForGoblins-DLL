@@ -1,7 +1,11 @@
 name: Read-only AP bridge
 on:
   push:
+    branches: [master]
   pull_request:
+concurrency:
+  group: ap-bridge-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 jobs:
   copied-snapshot:
     runs-on: ubuntu-latest
