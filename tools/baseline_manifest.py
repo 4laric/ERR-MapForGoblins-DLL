@@ -45,7 +45,8 @@ def manifest(game, repo):
         "missing_groups": [name for name, files in inputs.items() if not files],
         "inputs": inputs,
         "build_sources": inventory(repo, subprocess.check_output(
-            ["git", "-C", str(repo), "ls-files", "-z"], text=True
+            ["git", "-c", "safe.directory=" + repo.resolve().as_posix(),
+             "-C", str(repo), "ls-files", "-z"], text=True
         ).rstrip("\0").split("\0"), exact=True),
         "generated": inventory(repo, ["src/generated_shared/*", "src/generated_vanilla/*"]),
     }
