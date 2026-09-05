@@ -7,6 +7,14 @@ param(
 $ErrorActionPreference = "Stop"
 $repo = Split-Path $PSScriptRoot -Parent
 $game = (Resolve-Path -LiteralPath $GameDir).Path
+$BuildDir = [System.IO.Path]::GetFullPath($BuildDir)
+$gamePrefix = $game.TrimEnd([char]92, [char]47) + [System.IO.Path]::DirectorySeparatorChar
+foreach ($outputRoot in @($repo, $BuildDir)) {
+    if ($outputRoot.Equals($game, [System.StringComparison]::OrdinalIgnoreCase) -or
+        $outputRoot.StartsWith($gamePrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "The source and build directories must be outside the game installation."
+    }
+}
 $env:MFG_PROFILE = "vanilla"
 $env:PYTHONUTF8 = "1"
 
