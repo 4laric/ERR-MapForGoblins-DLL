@@ -13,6 +13,7 @@ from pathlib import Path
 from collections import defaultdict, Counter
 
 import config
+from lot_identity import linkage_lot_type
 from massedit_common import (DATA_DIR, OUT_DIR, UNDERGROUND_AREAS, DLC_AREAS,
                              OVERWORLD_AREAS, VALID_LOCATION_IDS, resolve_location_id,
                              resolve_location_id_at, get_disp_mask, is_dlc_plane)
@@ -802,7 +803,8 @@ def write_massedit(records, filepath, icon_id, start_id, lot_linkage=None):
     If lot_linkage (dict) is given, records each marker's source item-lot so the
     DLL can read the LIVE getItemFlagId/item from memory at runtime (live-loot /
     randomizer compatibility): lot_linkage[row_id] = [lotId, lotType] where
-    lotType 1=ItemLotParam_map (treasure/emevd), 2=ItemLotParam_enemy.
+    lotType 1=ItemLotParam_map, 2=ItemLotParam_enemy. The explicit
+    lotSource from extraction is required; placement source is not a table.
     """
     lines = []
     row_id = start_id
@@ -816,7 +818,7 @@ def write_massedit(records, filepath, icon_id, start_id, lot_linkage=None):
         if lot_linkage is not None:
             _lot = rec.get('itemLotId', 0) or 0
             if _lot > 0:
-                _lt = 2 if rec.get('source') == 'enemy' else 1  # enemy vs map(treasure/emevd)
+                _lt = linkage_lot_type(rec)
                 lot_linkage[row_id] = [int(_lot), _lt]
 
         # Primary item ID for localized text, offset-encoded by item category:
@@ -970,6 +972,11 @@ def main():
     with open(DB_PATH, encoding='utf-8') as f:
         db = json.load(f)
     print(f'  {len(db)} records')
+
+    # Refuse legacy/ambiguous identity before writing any category output.
+    for rec in db:
+        if (rec.get('itemLotId', 0) or 0) > 0:
+            linkage_lot_type(rec)
 
     # Switched-chest gating: derive from the FULL record set (positions/pairs must be
     # complete, before the eventFlag/source filters below).
