@@ -26,7 +26,7 @@ if (Test-Path -LiteralPath $configFile) {
 }
 try {
     $configText = "[paths]" + [Environment]::NewLine + "game_dir = " + $game.Replace([char]92, [char]47)
-    Set-Content -LiteralPath $configFile -Value $configText -Encoding utf8
+    [System.IO.File]::WriteAllText($configFile, $configText, [System.Text.UTF8Encoding]::new($false))
     Push-Location $repo
     try {
         foreach ($generator in @("generate_logo", "generate_map_icons", "generate_overlay_icons", "generate_i18n")) {
@@ -35,9 +35,9 @@ try {
         Invoke-Checked $Python @("tools/baseline_manifest.py", "--game-dir", $game, "--output", "$BuildDir/inputs-before.json")
         Invoke-Checked $Python @("tools/check_aobs.py", "--exe", "$game/eldenring.exe", "--json", "$BuildDir/aobs.json")
         Invoke-Checked $Python @("tools/build_pipeline.py", "--profile", "vanilla", "--force-all")
+        Invoke-Checked $Python @("tools/baseline_manifest.py", "--game-dir", $game, "--output", "$BuildDir/inputs-after.json", "--compare-inputs", "$BuildDir/inputs-before.json")
         Invoke-Checked $CMake @("-S", $repo, "-B", $BuildDir, "-G", "Visual Studio 17 2022", "-A", "x64", "-DGENERATED_SUBDIR=generated_vanilla")
         Invoke-Checked $CMake @("--build", $BuildDir, "--config", "Release")
-        Invoke-Checked $Python @("tools/baseline_manifest.py", "--game-dir", $game, "--output", "$BuildDir/inputs-after.json")
     } finally { Pop-Location }
 } finally {
     if (Test-Path -LiteralPath $configFile) { Remove-Item -LiteralPath $configFile }

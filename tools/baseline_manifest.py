@@ -7,13 +7,16 @@ vanilla provenance, successful extraction, or runtime compatibility.
 import argparse
 import hashlib
 import json
+import subprocess
 from pathlib import Path
 
 
-def inventory(root, patterns):
+def inventory(root, patterns, *, exact=False):
     result = {}
     for pattern in patterns:
-        for path in sorted(root.glob(pattern)):
+        if not pattern:
+            continue
+        for path in ([root / pattern] if exact else sorted(root.glob(pattern))):
             if path.is_file():
                 digest = hashlib.sha256()
                 with path.open("rb") as stream:
@@ -41,11 +44,9 @@ def manifest(game, repo):
         "provenance": "user-supplied; pristine vanilla status unverified",
         "missing_groups": [name for name, files in inputs.items() if not files],
         "inputs": inputs,
-        "build_sources": inventory(repo, [
-            "CMakeLists.txt", "tools/*.py", "tools/lib/*.dll",
-            "tools/paramdefs/*.xml", "assets/map_icons/custom/**/*",
-            "assets/map_icons/MapForGoblins*.png", "i18n/*.json"
-        ]),
+        "build_sources": inventory(repo, subprocess.check_output(
+            ["git", "-C", str(repo), "ls-files", "-z"], text=True
+        ).rstrip("\0").split("\0"), exact=True),
         "generated": inventory(repo, ["src/generated_shared/*", "src/generated_vanilla/*"]),
     }
 
@@ -55,13 +56,19 @@ def main():
     parser.add_argument("--game-dir", type=Path, required=True)
     parser.add_argument("--repo", type=Path, default=Path(__file__).resolve().parent.parent)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--compare-inputs", type=Path, help="fail if input content differs from this manifest")
     args = parser.parse_args()
     report = manifest(args.game_dir, args.repo)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print("Missing input groups:", ", ".join(report["missing_groups"]) or "none")
     print("Generated files:", len(report["generated"]))
-    return bool(report["missing_groups"])
+    changed = False
+    if args.compare_inputs:
+        previous = json.loads(args.compare_inputs.read_text(encoding="utf-8"))
+        changed = previous["inputs"] != report["inputs"]
+        print("Input content changed:", changed)
+    return bool(report["missing_groups"]) or changed
 
 
 if __name__ == "__main__":
