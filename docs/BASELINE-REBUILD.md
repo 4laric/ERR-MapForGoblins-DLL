@@ -58,4 +58,6 @@ This disables optimization on this executable until the destructor is ported.
 MSB extraction completed: 1,347 files, zero parse errors, 26,778 item records.
 Full pipeline/build and in-game acceptance remain separate gates.
 
-CI pins Windows 2022 and CMake 3.31.6, matching the tested build generation.\nThe legacy MinHook CMake project fails configuration under CMake 4 defaults;\nnewer CMake/toolset support requires a separate dependency compatibility check.\n
+CI pins Windows 2022 and CMake 3.31.6, matching the tested build generation.
+The legacy MinHook CMake project fails configuration under CMake 4 defaults;
+newer CMake/toolset support requires a separate dependency compatibility check.

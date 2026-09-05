@@ -168,3 +168,6 @@ tools/dashboard/
 # Restricted build-local Oodle dependency, never distributed.
 tools/oo2core_*.dll
 tools/lib/oo2core_*.dll
+
+# Local baseline input manifests, experimental DLLs and offline audit outputs.
+.scratch/
