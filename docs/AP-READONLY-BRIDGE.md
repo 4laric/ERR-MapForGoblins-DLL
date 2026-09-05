@@ -52,3 +52,14 @@ release installer are not implemented. Never hot-swap hooked DLLs.
 Remaining work: current-game baseline acceptance, seed registry consumption in F6,
 continuous opt-in polling, multi-check selection, focus/presentation commands,
 review context, duplicate-engine prevention, packaging and performance testing.
+
+For offline coverage against the actual regenerated profile, the inventory helper
+links the generated entries directly rather than guessing their C++ text format:
+
+    g++ -std=c++20 -Isrc/generated_vanilla tools/export_ap_marker_lots.cpp \
+      src/generated_vanilla/goblin_map_data.cpp -o /tmp/mfg-marker-lots
+    /tmp/mfg-marker-lots > /tmp/mfg-marker-lots.csv
+
+Fingerprint the generated input with baseline_manifest.py and retain that profile
+alongside the CSV. This inventories baked source identities; native config, actual
+loaded rows and current-seed membership still need separate validation.
