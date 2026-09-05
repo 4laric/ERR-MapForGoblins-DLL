@@ -14,6 +14,7 @@ namespace goblin::config
     bool requireMapFragments = true;
     bool debugLogging = false;        // key debug_logging: verbose diagnostics; also gates the dev-only
                                       // worldmap SpriteDef/dict dumps + RM2::Execute trace in goblin_gfx_probe.
+    bool fastMapProfile = false;
     bool fastMapOpen = true;          // key fast_map_open: skip redundant relayout on re-open + amortize the first open
     // (icon/resource injection is unconditional - it IS how icons render without a gfx; no ini toggle.)
 
@@ -121,6 +122,8 @@ namespace
             {"Goblin", nullptr, false, {
                 B("require_map_fragments", requireMapFragments, "true",
                   "Require map fragment discovery before showing icons in that area"),
+                B("fast_map_profile", fastMapProfile, "false",
+                  "Diagnostic: measure 30 seconds of map layout calls without skipping work. Restart required; overrides fast_map_open."),
                 IniEntry{"fast_map_open", IniType::Bool, &cfg::fastMapOpen, "true",
                          "BETA: makes the world map open faster when many icons are shown.\nTurn off if the map glitches or crashes.",
                          false, "fast_map_reopen"},

@@ -25,6 +25,7 @@ namespace goblin
     {
         extern bool requireMapFragments;
         extern bool debugLogging;
+        extern bool fastMapProfile; // startup-only measurement mode; restart required
         extern bool fastMapOpen; // ini key: fast_map_open (skip relayout on reopen + amortize first open)
         // NOTE: icon/resource injection is unconditional now (no ini toggle) - it's how icons render without
         // a gfx. The dev-only SpriteDef/dict dumps + RM2 trace in goblin_gfx_probe are gated by debugLogging.

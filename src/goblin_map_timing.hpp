@@ -9,6 +9,6 @@ namespace goblin::map_timing
     // internally from the map dispatcher detour (game UI thread), not externally.
     // See docs/research_worldmap_internals.md.
     void setup();
-    // Bounded, pass-through diagnostic selected by MFG_FASTMAP_PROFILE=1 at startup.
+    // Bounded, pass-through diagnostic selected by fast_map_profile or MFG_FASTMAP_PROFILE=1 at startup.
     void poll_profile();
 }

@@ -1,10 +1,11 @@
 # FastMap measurement build
 
 This is an opt-in diagnostic, not a speedup or a re-enabled layout cache.
-Set MFG_FASTMAP_PROFILE=1 in the environment inherited by the game at launch.
+Set fast_map_profile = true in the existing [Goblin] section of MapForGoblins.ini,
+then restart the game. Alternatively set MFG_FASTMAP_PROFILE=1 in the environment
+inherited by the game at launch.
 The choice is captured once at DLL startup. Profile mode bypasses fast_map_open
-even if that INI setting is true. Without the environment variable, existing
-behavior is unchanged.
+even if that INI setting is true. With both opt-ins off, existing behavior is unchanged.
 
 ## What it measures
 
@@ -51,7 +52,7 @@ does not repair just the signature and activate that algorithm.
 Use the same character, map position, zoom and settings for each run. Restart
 the game between captures to rearm the diagnostic.
 
-1. Launch with the profile environment variable. Check the log for
+1. Launch with profiling enabled in the INI (or environment). Check the log for
    "[fastmap-profile] armed"; a disabled message is a failed preflight, not a
    successful measurement.
 2. Open the map, leave it stationary for about ten seconds, pan/zoom for ten,

@@ -185,8 +185,9 @@ namespace
 void goblin::map_timing::setup()
 {
     char profile_env[8]{};
-    g_profile_mode = GetEnvironmentVariableA("MFG_FASTMAP_PROFILE", profile_env, sizeof(profile_env)) == 1
-                     && profile_env[0] == '1';
+    g_profile_mode = goblin::config::fastMapProfile ||
+        (GetEnvironmentVariableA("MFG_FASTMAP_PROFILE", profile_env, sizeof(profile_env)) == 1
+         && profile_env[0] == '1');
     if (g_profile_mode) {
         try {
             auto *m = static_cast<unsigned char *>(modutils::scan_unique(
