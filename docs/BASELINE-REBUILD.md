@@ -4,7 +4,7 @@ Use an isolated checkout and build directory. Do not point output at the game
 installation or an active development checkout. The vanilla profile means
 which pipeline runs, not proof that unpacked input files are pristine.
 
-Requirements: Windows x64, VS2022 C++ tools, CMake >=3.28.1, Python >=3.10 with
+Requirements: Windows x64, VS2022 C++ tools, CMake 3.31.6, Python >=3.10 with
 requirements.txt, .NET Core runtime, unpacked game inputs. The py launcher and
 cmake need not be on PATH: tools/build_vanilla_baseline.ps1 accepts explicit
 executables. The script refuses to overwrite an existing tools/config.ini.
@@ -57,3 +57,5 @@ hook is installed; otherwise deferred marker pointers could outlive map close.
 This disables optimization on this executable until the destructor is ported.
 MSB extraction completed: 1,347 files, zero parse errors, 26,778 item records.
 Full pipeline/build and in-game acceptance remain separate gates.
+
+CI pins Windows 2022 and CMake 3.31.6, matching the tested build generation.\nThe legacy MinHook CMake project fails configuration under CMake 4 defaults;\nnewer CMake/toolset support requires a separate dependency compatibility check.\n
