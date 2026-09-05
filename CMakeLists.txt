@@ -63,7 +63,7 @@ FetchContent_Declare(miniz
 # RGBA texture). Download only; we #define STB_IMAGE_IMPLEMENTATION in goblin_overlay.cpp.
 FetchContent_Declare(stb
   GIT_REPOSITORY        https://github.com/nothings/stb.git
-  GIT_TAG               master)
+  GIT_TAG               2c980bb59875b0d32144a71867fbdebb2f77cd20)
 
 # Set iterator debug level to 0 for ELDEN RING ABI compatibility
 add_definitions(-D_ITERATOR_DEBUG_LEVEL=0)

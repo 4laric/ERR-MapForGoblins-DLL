@@ -35,6 +35,9 @@ namespace
 
     uintptr_t g_map_callsite = 0;       // ret addr of the map's per-marker refresh call
     uintptr_t g_ce_gate[3] = {0, 0, 0}; // ret addrs of the 3 ce390 calls
+    // Partial hook installation must remain a pass-through. In particular,
+    // never queue marker pointers before the close hook can retire them.
+    std::atomic<bool> g_ready{false};
     std::atomic<bool> g_built{false};
     std::atomic<int> g_refresh_n{0};    // refreshes that ran; latches g_built after the first build
 
@@ -80,6 +83,7 @@ namespace
 
     void *refresh_detour(void *a, void *b, void *c, void *d)
     {
+        if (!g_ready.load(std::memory_order_acquire)) return o_refresh(a, b, c, d);
         uintptr_t ret = (uintptr_t)_ReturnAddress();
         if (ret == g_map_callsite) // the map's per-marker build call (other UI left as-is)
         {
@@ -102,6 +106,7 @@ namespace
 
     void *ce390_detour(void *a, void *b, void *c, void *d)
     {
+        if (!g_ready.load(std::memory_order_acquire)) return o_ce390(a, b, c, d);
         uintptr_t ret = (uintptr_t)_ReturnAddress();
         bool map_site = (ret == g_ce_gate[0] || ret == g_ce_gate[1] || ret == g_ce_gate[2]);
         // Drive the first-open amortize replay + the build latch HERE, on the game's
@@ -178,6 +183,7 @@ void goblin::map_timing::setup()
                     "48 C7 45 F0 FE FF FF FF 48 89 9C 24 88 00 00 00 48 8B F1 48 8D 05 "
                     "B7 A3 16 02"},
             wmd_dtor_detour, o_wmd_dtor);
+        g_ready.store(true, std::memory_order_release);
         spdlog::info("[fastmap] fast map open ready");
     }
     catch (const std::exception &e)
