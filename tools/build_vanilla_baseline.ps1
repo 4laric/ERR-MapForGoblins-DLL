@@ -25,9 +25,8 @@ if (Test-Path -LiteralPath $configFile) {
     throw "Move existing tools/config.ini aside before this dedicated baseline build."
 }
 try {
-    "[paths]
-game_dir = $($game.Replace('\','/'))" -replace '\n', "`n" |
-        Set-Content -LiteralPath $configFile -Encoding utf8
+    $configText = "[paths]" + [Environment]::NewLine + "game_dir = " + $game.Replace([char]92, [char]47)
+    Set-Content -LiteralPath $configFile -Value $configText -Encoding utf8
     Push-Location $repo
     try {
         foreach ($generator in @("generate_logo", "generate_map_icons", "generate_overlay_icons", "generate_i18n")) {
