@@ -20,6 +20,8 @@ struct ScanArgs
 };
 
 void *scan(const ScanArgs &args);
+// Require exactly one match in the executable image; throw otherwise.
+void *scan_unique(const std::string &aob);
 
 void hook(void *function, void *detour, void **trampoline);
 

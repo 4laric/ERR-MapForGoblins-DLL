@@ -273,6 +273,7 @@ static void setup_mod()
         auto elapsed = std::chrono::steady_clock::now() - start;
         bool fast_phase = elapsed < std::chrono::seconds(30);
         std::this_thread::sleep_for(fast_phase ? std::chrono::milliseconds(100) : std::chrono::seconds(2));
+        goblin::map_timing::poll_profile();
 
         try
         {
