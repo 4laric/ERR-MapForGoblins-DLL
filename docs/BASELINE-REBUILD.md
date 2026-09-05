@@ -46,10 +46,10 @@ Public source a25443312dd07c21bb616bd2aeda16ee889df045.
 - Signature success is not evidence of safe layouts, lifecycle, rendering or
   game-version support. No in-game baseline has been exercised.
 
-stb's formerly floating master dependency is pinned to its resolved commit.
-Other existing version tags still rely on upstream tag integrity. Record fetched
-dependency revisions before publishing a release; this is not yet a hermetic
-release build.
+All seven CMake Git dependencies are pinned to the exact commits used by the
+first successful Windows compile. Python dependencies and toolchain versions
+are recorded in the local build evidence; this is not yet a hermetic release
+build.
 
 The first scan exposed a source bug: refresh hooks stayed active when the close
 hook failed. Fast-map optimization now stays pass-through until every required
