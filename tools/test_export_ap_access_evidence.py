@@ -6,12 +6,32 @@ class AccessEvidenceTests(unittest.TestCase):
     def test_native_display_gate_does_not_become_access_rule(self):
         rows = [{'reference_id': 'pin', 'category': 'LootUtilities', 'lotSource': 'map',
                  'param_fields': {'textEnableFlag2Id1': 3691, 'textDisableFlagId1': 123}}]
-        placement = {'checks': [{'ap_id': 9, 'name': 'check', 'comparisons': [
+        placement = {'input_sha256': {'reference': 'test-hash'}, 'checks': [{'ap_id': 9, 'name': 'check', 'comparisons': [
             {'reference_id': 'pin', 'identity_status': 'single_candidate', 'status': 'agreement'}]}]}
-        report = native_report(rows, placement)
+        report = native_report(rows, placement, 'test-hash')
         self.assertEqual(report['counts']['distinct_ap_candidates_with_display_enable'], 1)
         self.assertFalse(report['records'][0]['access_adjudicated'])
         self.assertEqual([e['kind'] for e in report['records'][0]['evidence']], ['display_enable', 'display_hide'])
+
+    def test_mismatched_reference_bytes_rejected(self):
+        with self.assertRaisesRegex(ValueError, 'SHA-256'):
+            native_report([], {'input_sha256': {'reference': 'another-profile'}}, 'this-profile')
+
+    def test_missing_reference_hash_rejected(self):
+        with self.assertRaisesRegex(ValueError, 'SHA-256'):
+            native_report([], {})
+
+    def test_duplicate_native_ids_rejected(self):
+        with self.assertRaisesRegex(ValueError, 'duplicate native'):
+            native_report([{'reference_id': '1'}, {'reference_id': 1}])
+
+    def test_mismatched_qualified_lot_rejected(self):
+        for field, value in [('lot_table', 'enemy'), ('lot_row', 8)]:
+            ref = {'reference_id': 'pin', 'lot_table': 'map', 'lot_row': 7}
+            ref[field] = value
+            with self.assertRaisesRegex(ValueError, 'lot identity'):
+                native_report([{'reference_id': 'pin', 'lotSource': 'map', 'itemLotId': 7}],
+                              {'input_sha256': {'reference': 'h'}, 'references': [ref]}, 'h')
 
     def test_native_no_enable_is_not_rule_free(self):
         report = native_report([{'reference_id': 'pin', 'category': 'WorldImpStatues',

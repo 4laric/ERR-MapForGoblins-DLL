@@ -70,12 +70,33 @@ def build_report(rows, switches=(), puzzles=()):
                            'No check has been adjudicated free of additional access requirements.']}
 
 
-def native_report(rows, placement=None):
+def native_report(rows, placement=None, native_sha256=None):
     """Retain native display flags and existing identity candidates; no location join."""
+    native_by_id = {}
+    for row in rows:
+        rid = str(row['reference_id'])
+        if rid in native_by_id:
+            raise ValueError(f'duplicate native reference_id: {rid}')
+        native_by_id[rid] = row
+    if placement is not None:
+        expected = placement.get('input_sha256', {}).get('reference')
+        if not native_sha256 or expected != native_sha256:
+            raise ValueError('placement reference SHA-256 does not match native input bytes')
+        seen = set()
+        for ref in placement.get('references', []):
+            rid = str(ref['reference_id'])
+            if rid in seen or rid not in native_by_id:
+                raise ValueError(f'duplicate or unknown placement reference_id: {rid}')
+            seen.add(rid)
+            row = native_by_id[rid]
+            if ref.get('lot_table') != row.get('lotSource') or ref.get('lot_row') != row.get('itemLotId'):
+                raise ValueError(f'placement lot identity disagrees for reference {rid}')
     matches = {}
     for check in (placement or {}).get('checks', []):
         for comparison in check.get('comparisons', []):
             rid = str(comparison['reference_id'])
+            if rid not in native_by_id:
+                raise ValueError(f'unknown comparison reference_id: {rid}')
             matches.setdefault(rid, {})[check['ap_id']] = {
                 'ap_id': check['ap_id'], 'name': check['name'],
                 'identity_status': comparison.get('identity_status'),
@@ -146,7 +167,7 @@ def main():
         placement = None
         if args.placement_report:
             placement, inputs['placement_report'] = read_input(args.placement_report)
-        report['native'] = native_report(native, placement)
+        report['native'] = native_report(native, placement, inputs['native_reference']['sha256'])
     report['inputs'] = inputs
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
