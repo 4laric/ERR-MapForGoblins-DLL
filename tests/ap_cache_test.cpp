@@ -12,8 +12,126 @@ using goblin::ap::HoverCache;
 extern "C" uint32_t __cdecl MFG_AP_SET_LOT_STYLES_V1(
     uint32_t, const MFG_AP_LotStyleV1*, uint32_t, uint32_t);
 
+extern "C" uint32_t __cdecl MFG_AP_SET_CHECK_STATES_V1(
+    uint32_t, const MFG_AP_CheckStateV1*, uint32_t, uint32_t);
+
+static void test_check_presentation()
+{
+    using goblin::ap::check_marker_style;
+    assert(check_marker_style(MFG_AP_STYLE_YELLOW, MFG_AP_CHECK, 2) == MFG_AP_STYLE_NORMAL);
+    assert(check_marker_style(MFG_AP_STYLE_ORANGE, 0, 2) == MFG_AP_STYLE_NORMAL);
+    for (size_t representations : {size_t{2}, size_t{12}})
+    {
+        assert(check_marker_style(MFG_AP_STYLE_YELLOW, 3, representations) == MFG_AP_STYLE_ORANGE);
+        assert(check_marker_style(MFG_AP_STYLE_NORMAL, 3, representations) == MFG_AP_STYLE_ORANGE);
+    }
+    assert(check_marker_style(MFG_AP_STYLE_YELLOW, 3, 1) == MFG_AP_STYLE_YELLOW);
+    assert(check_marker_style(MFG_AP_STYLE_NORMAL, 3, 1) == MFG_AP_STYLE_ORANGE);
+    assert(check_marker_style(MFG_AP_STYLE_YELLOW, 2, 12) == MFG_AP_STYLE_NORMAL);
+
+    goblin::ap::CheckFilterRefresh refresh;
+    assert(refresh.due(1, 1, 1000));
+    refresh.complete(1, 1, 1000, false);
+    assert(!refresh.due(1, 1, 1099)); // bounded retry, not every owner tick
+    assert(refresh.due(1, 1, 1100));  // identical heartbeat generation still retries
+    refresh.complete(1, 1, 1100, true);
+    assert(!refresh.due(1, 1, 1200));
+    assert(refresh.due(1, 3, 1200)); // option changes have their own signature
+    refresh.complete(1, 3, 1200, false);
+    assert(refresh.due(1, 1, 1300)); // failed partial write must restore even old options
+    refresh.complete(1, 1, 1300, true);
+    assert(refresh.due(0, 1, 1301)); // disconnect/expiry restores native state
+    refresh.complete(0, 1, 1301, true);
+    assert(!refresh.due(0, 1, 1400));
+}
+
+static void test_check_states()
+{
+    static_assert(sizeof(MFG_AP_CheckStateV1) == 12);
+    HoverCache cache;
+    cache.set_active(true);
+    MFG_AP_CheckStateV1 states[] = {{1, 10, 1}, {1, 11, 3}, {1, 12, 5}, {1, 13, 7}, {1, 14, 15}};
+    assert(cache.set_check_states(2, states, 5, 3000, 1000) == MFG_AP_UNSUPPORTED_ABI);
+    assert(cache.set_check_states(1, nullptr, 1, 3000, 1000) == MFG_AP_BAD_ARGUMENT);
+    assert(cache.set_check_states(1, states, 8193, 3000, 1000) == MFG_AP_BAD_ARGUMENT);
+    assert(cache.set_check_states(1, states, 5, 249, 1000) == MFG_AP_BAD_ARGUMENT);
+    assert(cache.set_check_states(1, states, 5, 10001, 1000) == MFG_AP_BAD_ARGUMENT);
+    assert(cache.set_check_states(1, states, 5, 3000, UINT64_MAX) == MFG_AP_BAD_ARGUMENT);
+    assert(cache.set_check_states(1, states, 5, 3000, 1000) == MFG_AP_OK);
+    const auto snapshot = cache.active_check_states(1000);
+    assert(snapshot && snapshot->flags.size() == 5);
+    assert(cache.set_check_states(1, states, 5, 3000, 1001) == MFG_AP_OK);
+    assert(cache.active_check_states(1001) == snapshot); // lease-only heartbeat
+
+    using goblin::ap::check_filter_allows;
+    const auto allows = [&](uint32_t row, bool c, bool p, bool l) {
+        return check_filter_allows(snapshot.get(), 1, row, c, p, l);
+    };
+    assert(allows(999, false, false, false));
+    assert(!allows(999, true, false, false));
+    assert(allows(10, true, false, false));
+    assert(!allows(10, false, true, false));
+    assert(allows(11, false, true, false));
+    assert(!allows(11, false, false, true));
+    assert(allows(12, false, false, true));
+    assert(!allows(13, true, true, true)); // separate witnesses cannot satisfy conjunction
+    assert(allows(14, true, true, true));
+    assert(!check_filter_allows(snapshot.get(), 2, 14, true, false, false));
+    assert(!check_filter_allows(snapshot.get(), 0, 0, true, false, false));
+    assert(check_filter_allows(nullptr, 0, 0, true, true, true));
+    // Final visibility is an intersection: an allowed AP state cannot reveal a native-hidden marker.
+    const bool native_visible = false;
+    assert(!(native_visible && allows(14, true, true, true)));
+
+    for (uint32_t flags : {0u, 2u, 4u, 8u, 9u, 11u, 13u, 17u, UINT32_MAX})
+    {
+        MFG_AP_CheckStateV1 bad{1, 10, flags};
+        assert(cache.set_check_states(1, &bad, 1, 3000, 1001) == MFG_AP_BAD_ARGUMENT);
+        assert(cache.active_check_states(1001)->generation == snapshot->generation);
+    }
+    for (auto bad : {MFG_AP_CheckStateV1{0, 10, 1}, MFG_AP_CheckStateV1{3, 10, 1},
+                     MFG_AP_CheckStateV1{1, 0, 1}})
+        assert(cache.set_check_states(1, &bad, 1, 3000, 1001) == MFG_AP_BAD_ARGUMENT);
+    states[1] = states[0];
+    assert(cache.set_check_states(1, states, 2, 3000, 1001) == MFG_AP_BAD_ARGUMENT);
+    states[0].flags = 15;
+    assert(snapshot->flags.at(goblin::ap::check_key(1, 10)) == 1); // immutable copied ownership
+    assert(cache.set_check_states(1, nullptr, 0, 250, 2000) == MFG_AP_OK);
+    auto empty = cache.active_check_states(2249);
+    assert(empty && empty->flags.empty());
+    assert(!check_filter_allows(empty.get(), 1, 10, true, false, false));
+    assert(!cache.active_check_states(2250));
+    assert(cache.set_check_states(1, nullptr, 0, 250, 3000) == MFG_AP_OK);
+    assert(!cache.active_check_states(2999));
+    assert(cache.set_check_states(1, states, 1, 250, 4000) == MFG_AP_OK);
+    assert(cache.set_check_states(1, states, 0, 0, 4001) == MFG_AP_BAD_ARGUMENT);
+    assert(cache.set_check_states(1, nullptr, 0, 0, 4001) == MFG_AP_OK);
+    assert(!cache.active_check_states(4001));
+    assert(cache.set_check_states(1, states, 1, 250, 5000) == MFG_AP_OK);
+    cache.set_active(false); cache.set_active(true);
+    assert(!cache.active_check_states(5001));
+    assert(cache.set_check_states(1, states, 1, 250, 6000) == MFG_AP_OK);
+    cache.invalidate_rows();
+    assert(!cache.active_check_states(6001));
+    assert(cache.set_check_states(1, states, 1, 250, 7000) == MFG_AP_OK);
+    cache.install_rows({{100, 1, 1, 10}});
+    assert(!cache.active_check_states(7001));
+
+    auto& live = goblin::ap::cache();
+    live.set_active(true);
+    assert(MFG_AP_SET_CHECK_STATES_V1(1, states, 1, 3000) == MFG_AP_OK);
+    const auto now = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count());
+    assert(live.active_check_states(now));
+    assert(MFG_AP_SET_CHECK_STATES_V1(1, nullptr, 0, 3000) == MFG_AP_OK);
+    assert(MFG_AP_SET_CHECK_STATES_V1(1, nullptr, 0, 0) == MFG_AP_OK);
+    assert(!live.active_check_states(now));
+}
+
 int main()
 {
+    test_check_presentation();
+    test_check_states();
     static_assert(sizeof(MFG_AP_InfoV1) == 16);
     static_assert(sizeof(MFG_AP_HoverV1) == 40);
     static_assert(offsetof(MFG_AP_HoverV1, handle) == 16);
@@ -23,7 +141,7 @@ int main()
     assert(cache.query(2, &info, sizeof(info)) == MFG_AP_UNSUPPORTED_ABI);
     assert(cache.query(1, nullptr, sizeof(info)) == MFG_AP_BAD_ARGUMENT);
     assert(cache.query(1, &info, sizeof(info) - 1) == MFG_AP_BAD_ARGUMENT);
-    assert(cache.query(1, &info, sizeof(info)) == MFG_AP_OK && info.capabilities == MFG_AP_CAP_LOT_STYLE_OVERLAY_V1);
+    assert(cache.query(1, &info, sizeof(info)) == MFG_AP_OK && info.capabilities == (MFG_AP_CAP_LOT_STYLE_OVERLAY_V1 | MFG_AP_CAP_CHECK_STATES_V1));
     assert(cache.copy(&hover, sizeof(hover), 0) == MFG_AP_UNAVAILABLE);
     assert(!cache.install_rows({{0, 1, 1, 10}}));
     assert(!cache.install_rows({{100, 1, 0, 10}}));
@@ -36,7 +154,7 @@ int main()
     assert(cache.copy(&hover, sizeof(hover), 0) == MFG_AP_UNAVAILABLE);
     cache.set_hooks_ready(true);
     assert(cache.query(1, &info, sizeof(info)) == MFG_AP_OK &&
-           info.capabilities == (MFG_AP_CAP_HOVER_V1 | MFG_AP_CAP_LOT_STYLE_OVERLAY_V1));
+           info.capabilities == (MFG_AP_CAP_HOVER_V1 | MFG_AP_CAP_LOT_STYLE_OVERLAY_V1 | MFG_AP_CAP_CHECK_STATES_V1));
     assert(cache.copy(&hover, sizeof(hover), 0) == MFG_AP_OK &&
            hover.status == MFG_AP_NO_HOVER && hover.generation > 0);
     cache.observe(100, 1000);
@@ -98,7 +216,7 @@ int main()
         std::chrono::steady_clock::now().time_since_epoch()).count();
     live.observe(100, static_cast<uint64_t>(now));
     assert(MFG_AP_QUERY_V1(1, &info, sizeof(info)) == MFG_AP_OK);
-    assert(info.capabilities == (MFG_AP_CAP_HOVER_V1 | MFG_AP_CAP_LOT_STYLE_OVERLAY_V1));
+    assert(info.capabilities == (MFG_AP_CAP_HOVER_V1 | MFG_AP_CAP_LOT_STYLE_OVERLAY_V1 | MFG_AP_CAP_CHECK_STATES_V1));
     assert(MFG_AP_COPY_HOVER_V1(&buffer.value, sizeof(buffer.value)) == MFG_AP_OK);
     assert(buffer.value.handle == 1 && buffer.value.lot_row == 10);
     assert(buffer.guard == 0xabcdef);

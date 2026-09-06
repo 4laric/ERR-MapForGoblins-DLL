@@ -56,8 +56,10 @@ namespace goblin
     std::vector<HighlightPoint> focus_highlight_points();
 
 
-    struct APStylePoint { HighlightPoint point; uint8_t style = 0; };
-    // Snapshot of AP-requested halos for already-visible, unambiguous lot markers.
+    struct APStylePoint { HighlightPoint point; uint8_t style = 0; float scale = 1.0f; };
+    // Owner-thread poll/apply: true after a changed filter is successfully applied.
+    bool refresh_ap_check_filters();
+    // AP halos for visible markers: progression covers every representation; hints require a unique one.
     // Empty when the client snapshot is missing, expired, or map injection is inactive.
     const std::vector<APStylePoint> &ap_style_points();
     // Original (pre-remap) row ids of injected markers whose icon is currently HIDDEN

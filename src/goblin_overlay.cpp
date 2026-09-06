@@ -398,7 +398,8 @@ void draw_section(const goblin::IniSection &sec, bool &changed)
         {
             if (goblin::profile_is_vanilla() && e.err_only)
                 continue;
-            if (std::strcmp(e.key, "overlay_font_scale") == 0 ||
+            if (std::strcmp(e.key, "ap_progression_scale") == 0 ||
+                std::strcmp(e.key, "overlay_font_scale") == 0 ||
                 std::strcmp(e.key, "overlay_opacity") == 0)
                 continue; // shown as prominent sliders at the top of the Settings tab
             if (std::strncmp(e.key, "overlay_window_", 15) == 0)
@@ -604,6 +605,12 @@ void draw_settings_tab()
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip))
         ImGui::SetTooltip("%s", tr::tr(tr::TextId::OverlayTextSizeTip, lang));
     slider_key("overlay_font_scale");
+
+    ImGui::SliderFloat("AP progression highlight size", &goblin::config::apProgressionScale,
+                       1.0f, 3.0f, "%.1fx");
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Makes progression markers easier to spot while Archipelago map integration is active.");
+    slider_key("ap_progression_scale");
 
     // Overlay panel opacity (window bg alpha). Persisted to overlay_opacity on close.
     ImGui::SetNextItemWidth(ImGui::GetFontSize() * 9.0f);
@@ -2194,7 +2201,10 @@ static void draw_ap_map_colors()
             continue;
         const ImU32 color = styled.style == MFG_AP_STYLE_YELLOW
             ? IM_COL32(252, 233, 79, 245) : IM_COL32(252, 175, 62, 245);
-        draw->AddCircle(ImVec2(x, y), 16.0f, color, 24, 2.5f);
+        const float radius = 16.0f * styled.scale;
+        draw->AddCircle(ImVec2(x, y), radius, color, 32, 2.5f * styled.scale);
+        if (styled.scale > 1.0f)
+            draw->AddCircle(ImVec2(x, y), radius + 4.0f, color, 32, 1.5f);
     }
 }
 
@@ -2514,7 +2524,8 @@ void overlay_thread()
         const auto style_now = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now().time_since_epoch()).count());
         const bool ap_coloring = goblin::maphover::map_dialog() != nullptr &&
-            static_cast<bool>(goblin::ap::cache().active_lot_styles(style_now));
+            (static_cast<bool>(goblin::ap::cache().active_lot_styles(style_now)) ||
+             static_cast<bool>(goblin::ap::cache().active_check_states(style_now)));
         const bool projecting = (goblin::focus_category() >= 0 || ap_coloring) &&
                                 goblin::maphover::map_dialog() != nullptr;
         {
