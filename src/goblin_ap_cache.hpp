@@ -41,6 +41,19 @@ inline uint64_t check_key(uint32_t table, uint32_t row)
     return (static_cast<uint64_t>(table) << 32) | row;
 }
 
+struct CheckIdentity { uint32_t kind, row; };
+
+// Use captured bake metadata, never live flags modified by visibility settings.
+inline CheckIdentity marker_check_identity(uint32_t table, uint32_t row,
+                                           bool boss, uint32_t cleared, uint32_t disabled)
+{
+    if (row && (table == MFG_AP_LOT_MAP || table == MFG_AP_LOT_ENEMY))
+        return {table, row};
+    if (boss && !row && (cleared || disabled))
+        return {MFG_AP_BOSS_DEFEAT_FLAG, cleared ? cleared : disabled};
+    return {0, 0};
+}
+
 // A snapshot is an additional visibility restriction, never a reveal request.
 inline bool check_filter_allows(const CheckStateSnapshot* snapshot, uint32_t table,
                                 uint32_t row, bool checks_only, bool progression_only,
@@ -271,7 +284,8 @@ public:
         for (uint32_t i = 0; i < count; ++i)
         {
             const auto& e = entries[i];
-            if ((e.lot_table != MFG_AP_LOT_MAP && e.lot_table != MFG_AP_LOT_ENEMY) ||
+            if ((e.lot_table != MFG_AP_LOT_MAP && e.lot_table != MFG_AP_LOT_ENEMY &&
+                 e.lot_table != MFG_AP_BOSS_DEFEAT_FLAG) ||
                 !e.lot_row || !(e.flags & MFG_AP_CHECK) || (e.flags & ~15u) ||
                 ((e.flags & MFG_AP_PROGRESSION_IN_LOGIC) &&
                  (e.flags & (MFG_AP_PROGRESSION | MFG_AP_IN_LOGIC)) !=
@@ -318,6 +332,7 @@ public:
         if (!out || capacity < sizeof(*out)) return MFG_AP_BAD_ARGUMENT;
         std::lock_guard lock(mutex_);
         const uint32_t capabilities = MFG_AP_CAP_LOT_STYLE_OVERLAY_V1 | MFG_AP_CAP_CHECK_STATES_V1 |
+            MFG_AP_CAP_BOSS_CHECK_STATES_V1 |
             (ready() ? MFG_AP_CAP_HOVER_V1 : 0u);
         *out = {MFG_AP_ABI_V1, sizeof(*out), capabilities, sizeof(MFG_AP_HoverV1)};
         return MFG_AP_OK;

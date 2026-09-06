@@ -87,6 +87,7 @@ struct CategoryRow
     bool baked_notext;       // isEnableNoText as baked (restored after focus force-show)
     uint32_t lot_id = 0;
     uint8_t lot_type = 0;
+    goblin::ap::CheckIdentity check_identity{};
     bool focus_text;         // true while focus fabricated a label on a textless row
 };
 
@@ -517,7 +518,7 @@ void goblin::apply_focus_highlight()
         if (!cr.p) continue;
         const bool focused = focus >= 0 && static_cast<int>(cr.cat) == focus &&
                              cr.region_id == g_focus_region;
-        const bool shown = focused && ap_row_allowed(ap_checks.get(), cr.lot_type, cr.lot_id) &&
+        const bool shown = focused && ap_row_allowed(ap_checks.get(), cr.check_identity.kind, cr.check_identity.row) &&
                            !collected::is_row_collected(cr.row_id) &&
                            !kindling::is_row_collected(cr.row_id);
 
@@ -597,7 +598,7 @@ std::vector<goblin::HighlightPoint> goblin::focus_highlight_points()
         if (static_cast<int>(cr.cat) != focus || cr.region_id != g_focus_region) continue;
         // Only ring markers whose icon is actually shown: not collected/hidden, and not
         // gated off by a group-2 ENABLE flag (switched-chest absent variant / pre-event area).
-        if (!ap_row_allowed(ap_checks.get(), cr.lot_type, cr.lot_id) ||
+        if (!ap_row_allowed(ap_checks.get(), cr.check_identity.kind, cr.check_identity.row) ||
             row_is_hidden(cr) || row_group2_gate_off(cr.p)) continue;
         HighlightPoint hp{};
         if (row_marker_info(cr.p, hp)) out.push_back(hp);
@@ -651,12 +652,12 @@ const std::vector<goblin::APStylePoint>& goblin::ap_style_points()
     std::unordered_map<uint64_t, size_t> multiplicity;
     for (const auto& cr : g_category_rows)
     {
-        const uint64_t key = (static_cast<uint64_t>(cr.lot_type) << 32) | cr.lot_id;
+        const uint64_t key = goblin::ap::check_key(cr.check_identity.kind, cr.check_identity.row);
         if (styles.contains(key)) ++multiplicity[key];
     }
     for (const auto& cr : g_category_rows)
     {
-        const uint64_t key = (static_cast<uint64_t>(cr.lot_type) << 32) | cr.lot_id;
+        const uint64_t key = goblin::ap::check_key(cr.check_identity.kind, cr.check_identity.row);
         const auto style = styles.find(key);
         if (style == styles.end() || !cr.p) continue;
         uint32_t check_flags = 0;
@@ -670,7 +671,7 @@ const std::vector<goblin::APStylePoint>& goblin::ap_style_points()
         const bool eligible = g_focus_category >= 0
             ? static_cast<int>(cr.cat) == g_focus_category && cr.region_id == g_focus_region
             : is_category_enabled(cr.cat);
-        if (!ap_row_allowed(checks.get(), cr.lot_type, cr.lot_id) ||
+        if (!ap_row_allowed(checks.get(), cr.check_identity.kind, cr.check_identity.row) ||
             !eligible || cr.p->disableParam_NT ||
             (cr.p->eventFlagId && !flag_is_set(cr.p->eventFlagId)) ||
             row_is_hidden(cr) || row_group2_gate_off(cr.p))
@@ -987,6 +988,9 @@ void goblin::inject_map_entries()
             cr.baked_cleared = wp->clearedEventFlagId;
             cr.baked_dis1 = wp->textDisableFlagId1;
             cr.baked_dis2 = wp->textDisableFlagId2;
+            cr.check_identity = goblin::ap::marker_check_identity(
+                cr.lot_type, cr.lot_id, cr.cat == Category::WorldBosses,
+                cr.baked_cleared, cr.baked_dis1);
             cr.region_id = goblin::progress::region_place_id(*wp);  // for region-scoped focus
             cr.baked_text1 = wp->textId1;
             cr.baked_notext = wp->isEnableNoText;
@@ -1464,7 +1468,7 @@ void goblin::apply_category_visibility()
         const bool eligible =
             (focus >= 0) ? (static_cast<int>(cr.cat) == focus && cr.region_id == g_focus_region)
                          : is_category_enabled(cr.cat);
-        bool show = eligible && ap_row_allowed(ap_checks.get(), cr.lot_type, cr.lot_id) &&
+        bool show = eligible && ap_row_allowed(ap_checks.get(), cr.check_identity.kind, cr.check_identity.row) &&
                     !collected::is_row_collected(cr.row_id) &&
                     !kindling::is_row_collected(cr.row_id) &&
                     !is_manually_hidden(cr.p);  // user-hidden markers stay hidden
