@@ -15,6 +15,7 @@ from collections import defaultdict
 from pathlib import Path
 
 import config
+from lot_identity import resolve_lot_source
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
@@ -533,6 +534,7 @@ def main():
                 'itemLotId': lot_id,
                 'partName': part_name,
                 'source': 'treasure',
+                'lotSource': 'map',
                 'partBucket': bucket,
             })
 
@@ -802,12 +804,13 @@ def main():
         if dedup_key in seen_emevd:
             continue
         seen_emevd.add(dedup_key)
+        # These templates award map-table lots; placement source is independent.
         entry = {
             'map': pos['map'], 'areaNo': pos['areaNo'],
             'p1': pos['p1'], 'p2': pos['p2'],
             'x': pos['x'], 'y': pos['y'], 'z': pos['z'],
             'itemLotId': lot_id, 'partName': pos['name'],
-            'source': 'emevd', 'enemyModel': pos['model'],
+            'source': 'emevd', 'lotSource': 'map', 'enemyModel': pos['model'],
             'npcParamId': pos.get('npcParam', 0),
         }
         if defeat_flag > 0:
@@ -984,12 +987,13 @@ def main():
             continue
         seen_pairs.add(dedup_key)
         pos = entity_to_pos[chosen]
+        # These templates award map-table lots; placement source is independent.
         entry = {
             'map': pos['map'], 'areaNo': pos['areaNo'],
             'p1': pos['p1'], 'p2': pos['p2'],
             'x': pos['x'], 'y': pos['y'], 'z': pos['z'],
             'itemLotId': lot_id, 'partName': pos['name'],
-            'source': 'emevd', 'enemyModel': pos['model'],
+            'source': 'emevd', 'lotSource': 'map', 'enemyModel': pos['model'],
             'npcParamId': pos.get('npcParam', 0),
             'defeatFlag': flag_id, 'emevdEventId': event_id,
         }
@@ -1122,7 +1126,8 @@ def main():
         for lot in set(lots):
             if lot in existing_lot_ids:
                 continue  # already harvested by a treasure/enemy/template pass
-            lot_def = item_lots.get(lot) or item_lots_enemy.get(lot)
+            # AwardItemLot / AwardItemsIncludingClients address ItemLotParam_map.
+            lot_def = item_lots.get(lot)
             if not lot_def:
                 continue
             if any(lot_def.get(f'lotItemId0{s}', 0) in RUNE_GOODS for s in range(1, 9)):
@@ -1135,7 +1140,7 @@ def main():
                 'p1': pos['p1'], 'p2': pos['p2'],
                 'x': pos['x'], 'y': pos['y'], 'z': pos['z'],
                 'itemLotId': lot, 'partName': pos['name'],
-                'source': 'emevd',
+                'source': 'emevd', 'lotSource': 'map',
             }
             if is_death:
                 rec['enemyModel'] = pos['model']
@@ -1189,10 +1194,10 @@ def main():
 
         # For enemy drops, scan sequential lot entries (base+0, base+1, ...)
         # Each sub-entry may have its own getItemFlagId (one-time unique drops)
-        is_enemy = tr.get('source') == 'enemy'
+        lot_source = resolve_lot_source(tr, item_lots, item_lots_enemy)
         lots_to_check = []
 
-        if (is_enemy or tr.get('source') == 'emevd') and lot_id in item_lots_enemy:
+        if lot_source == 'enemy':
             # Scan base + sequential sub-lots, STOPPING at the first gap.
             # Without the break, the scan walks across the gap and picks up
             # sub-lots that belong to a *different* NpcParam's chain - e.g.
@@ -1204,7 +1209,7 @@ def main():
                 if sub_lot is None:
                     break  # gap in sequence - chain belongs to another NPC
                 lots_to_check.append((lot_id + offset, sub_lot))
-        elif lot_id in item_lots:
+        elif lot_source == 'map':
             # Treasure: scan base + sequential sub-lots (chests can have multiple items)
             # Stop at sub-lots that are themselves another treasure's base lot
             lots_to_check.append((lot_id, item_lots[lot_id]))
@@ -1216,10 +1221,6 @@ def main():
                 if sub_lot is None:
                     break  # gap in sequence, stop
                 lots_to_check.append((sub_id, sub_lot))
-        else:
-            lot = item_lots_enemy.get(lot_id)
-            if lot:
-                lots_to_check.append((lot_id, lot))
 
         if not lots_to_check:
             no_lot += 1
@@ -1254,6 +1255,7 @@ def main():
                     'areaNo': tr['areaNo'], 'gridX': gridX, 'gridZ': gridZ,
                     'dispMask': get_disp_mask(tr['areaNo']),
                     'itemLotId': sub_lot_id, 'eventFlag': sub_flag,
+                    'lotSource': lot_source,
                     'partName': tr['partName'],
                     'items': sub_items,
                     'primary_category': sub_items[0]['broad_category'],
@@ -1286,6 +1288,7 @@ def main():
             'gridZ': gridZ,
             'dispMask': get_disp_mask(tr['areaNo']),
             'itemLotId': lot_id,
+            'lotSource': lot_source,
             'eventFlag': event_flag,
             'partName': tr['partName'],
             'items': items,
@@ -1357,6 +1360,7 @@ def main():
             'items': items,
             'primary_category': items[0]['broad_category'],
             'from_fallback': True,
+            'lotSource': 'map',
         }
         database.append(record)
         fallback_count += 1
