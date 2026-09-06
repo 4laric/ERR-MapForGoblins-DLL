@@ -665,7 +665,7 @@ const std::vector<goblin::APStylePoint>& goblin::ap_style_points()
             const auto state = checks->flags.find(key);
             if (state != checks->flags.end()) check_flags = state->second;
         }
-        const auto marker_style = ap::check_marker_style(style->second, check_flags, multiplicity[key]);
+        const auto marker_style = ap::check_marker_style(style->second, check_flags, multiplicity[key], checks != nullptr);
         if (marker_style == MFG_AP_STYLE_NORMAL) continue;
         const bool eligible = g_focus_category >= 0
             ? static_cast<int>(cr.cat) == g_focus_category && cr.region_id == g_focus_region
@@ -1736,20 +1736,16 @@ static void apply_loot_settings()
         p->iconId = static_cast<decltype(p->iconId)>(icon);
 
         // Item-name label (only touch an item-name slot). Classify by the ORIGINAL
-        // encoded baked_text1, write the collision-proof remapped id (the string
-        // lives at the fresh id setup_messages allocated; remap_textid is identity
-        // for an unmapped key).
+        // encoded baked_text1. Only a copied, readable item name may replace
+        // the baseline; late-added AP placeholders can lack a PlaceName copy.
         if (lr.baked_text1 >= 50000000 && lr.baked_text1 < 600000000)
         {
-            int32_t label = lr.baked_text1;
+            int32_t label = goblin::live_item_textid(lr.baked_text1, p->textId1);
             if (anon)
-                label = ANON_LABEL_TEXTID;
+                label = goblin::remap_textid(ANON_LABEL_TEXTID);
             else if (do_labels && item > 0)
-            {
-                int32_t enc = encode_live_item(item, cat);
-                if (enc > 0) label = enc;
-            }
-            p->textId1 = goblin::remap_textid(label);
+                label = goblin::live_item_textid(encode_live_item(item, cat), label);
+            p->textId1 = label;
         }
 
         // Hide-on-pickup flag (all populated lines that had a baked flag)
@@ -2125,7 +2121,7 @@ void goblin::refresh_loot_from_itemlot()
                 int32_t item_id = *reinterpret_cast<int32_t *>(row->b + 0x00);  // lotItemId01
                 int32_t cat     = *reinterpret_cast<int32_t *>(row->b + 0x20);  // lotItemCategory01
                 int32_t enc = encode_live_item(item_id, cat);
-                int32_t fresh = goblin::remap_textid(enc);
+                int32_t fresh = goblin::live_item_textid(enc, p->textId1);
                 if (item_id > 0 && enc > 0 && fresh != p->textId1)
                 {
                     p->textId1 = fresh;

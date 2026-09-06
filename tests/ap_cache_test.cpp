@@ -18,6 +18,12 @@ extern "C" uint32_t __cdecl MFG_AP_SET_CHECK_STATES_V1(
 static void test_check_presentation()
 {
     using goblin::ap::check_marker_style;
+    // An old orange lease cannot override a newer seed classification.
+    assert(check_marker_style(MFG_AP_STYLE_ORANGE, MFG_AP_CHECK, 1, true) == MFG_AP_STYLE_NORMAL);
+    assert(check_marker_style(MFG_AP_STYLE_ORANGE, 0, 1, true) == MFG_AP_STYLE_NORMAL);
+    assert(check_marker_style(MFG_AP_STYLE_ORANGE, 3, 1, true) == MFG_AP_STYLE_ORANGE);
+    assert(check_marker_style(MFG_AP_STYLE_YELLOW, MFG_AP_CHECK, 1, true) == MFG_AP_STYLE_YELLOW);
+    assert(check_marker_style(MFG_AP_STYLE_ORANGE, 0, 1, false) == MFG_AP_STYLE_ORANGE);
     assert(check_marker_style(MFG_AP_STYLE_YELLOW, MFG_AP_CHECK, 2) == MFG_AP_STYLE_NORMAL);
     assert(check_marker_style(MFG_AP_STYLE_ORANGE, 0, 2) == MFG_AP_STYLE_NORMAL);
     for (size_t representations : {size_t{2}, size_t{12}})

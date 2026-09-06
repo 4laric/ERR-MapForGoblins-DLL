@@ -20,6 +20,10 @@ jobs:
         run: |
           g++ -std=c++20 -Wall -Wextra -Werror -fsanitize=address,undefined tests/map_profile_test.cpp -o /tmp/map-profile-test
           /tmp/map-profile-test
+      - name: Preserve valid labels when live item names are unavailable
+        run: |
+          g++ -std=c++20 -Wall -Wextra -Werror -fsanitize=address,undefined tests/live_label_test.cpp -o /tmp/live-label-test
+          /tmp/live-label-test
       - name: Check baseline input inventory
         run: python3 -m unittest discover -s tools -p test_baseline_manifest.py -v
   windows-compile-only:

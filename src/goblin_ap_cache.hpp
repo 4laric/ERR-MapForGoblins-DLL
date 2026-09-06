@@ -58,10 +58,15 @@ inline bool check_filter_allows(const CheckStateSnapshot* snapshot, uint32_t tab
 
 // A progression classification applies to every visible representation of its
 // lot. A hint style alone remains ambiguous when several native pins share it.
-inline uint32_t check_marker_style(uint32_t requested_style, uint32_t flags, size_t multiplicity)
+inline uint32_t check_marker_style(uint32_t requested_style, uint32_t flags, size_t multiplicity,
+                                   bool checks_active = false)
 {
     const bool progression = (flags & (MFG_AP_CHECK | MFG_AP_PROGRESSION)) ==
                              (MFG_AP_CHECK | MFG_AP_PROGRESSION);
+    // A newer seed-state snapshot overrides an older orange style lease.
+    // Yellow carries independent hint information and remains valid.
+    if (checks_active && !progression && requested_style == MFG_AP_STYLE_ORANGE)
+        requested_style = MFG_AP_STYLE_NORMAL;
     if (multiplicity != 1)
         return progression ? MFG_AP_STYLE_ORANGE : MFG_AP_STYLE_NORMAL;
     return requested_style ? requested_style :
