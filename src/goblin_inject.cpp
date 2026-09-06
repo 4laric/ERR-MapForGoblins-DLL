@@ -85,6 +85,8 @@ struct CategoryRow
     int32_t region_id;       // progress region PlaceName id (goblin::progress::region_place_id) for focus
     int32_t baked_text1;     // textId1 as baked (restored when focus removes a fabricated label)
     bool baked_notext;       // isEnableNoText as baked (restored after focus force-show)
+    uint32_t lot_id = 0;
+    uint8_t lot_type = 0;
     bool focus_text;         // true while focus fabricated a label on a textless row
 };
 
@@ -468,8 +470,46 @@ int32_t goblin::focus_region() { return g_focus_region; }
 // isEnableNoText and forces the line on (a point with no text is dropped by the game),
 // then restores the baked text when the row leaves focus. Only touches rows it labelled,
 // so it can run after apply_loot_settings without clobbering it.
+static uint64_t ap_now_ms()
+{
+    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+
+static unsigned ap_filter_options()
+{
+    return (goblin::config::apChecksOnly ? 1u : 0u) |
+           (goblin::config::apProgressionOnly ? 2u : 0u) |
+           (goblin::config::apInLogicOnly ? 4u : 0u);
+}
+
+static bool ap_row_allowed(const goblin::ap::CheckStateSnapshot* snapshot,
+                           uint32_t table, uint32_t row)
+{
+    return goblin::ap::check_filter_allows(snapshot, table, row,
+        goblin::config::apChecksOnly, goblin::config::apProgressionOnly,
+        goblin::config::apInLogicOnly);
+}
+
+static bool apply_ap_visibility_seh();
+
+bool goblin::refresh_ap_check_filters()
+{
+    // Only acknowledge a signature once owner-thread writes actually succeed.
+    static ap::CheckFilterRefresh refresh;
+    const auto now = ap_now_ms();
+    const auto snapshot = ap::cache().active_check_states(now);
+    const auto generation = snapshot ? snapshot->generation : 0;
+    const auto options = ap_filter_options();
+    if (!refresh.due(generation, options, now)) return false;
+    const bool success = apply_ap_visibility_seh();
+    refresh.complete(generation, options, now, success);
+    return success;
+}
+
 void goblin::apply_focus_highlight()
 {
+    const auto ap_checks = ap::cache().active_check_states(ap_now_ms());
     const int focus = g_focus_category;
     int n_shown = 0, n_forced = 0;
     for (auto &cr : g_category_rows)
@@ -477,7 +517,8 @@ void goblin::apply_focus_highlight()
         if (!cr.p) continue;
         const bool focused = focus >= 0 && static_cast<int>(cr.cat) == focus &&
                              cr.region_id == g_focus_region;
-        const bool shown = focused && !collected::is_row_collected(cr.row_id) &&
+        const bool shown = focused && ap_row_allowed(ap_checks.get(), cr.lot_type, cr.lot_id) &&
+                           !collected::is_row_collected(cr.row_id) &&
                            !kindling::is_row_collected(cr.row_id);
 
         if (shown)
@@ -546,6 +587,7 @@ static bool row_marker_info(const from::paramdef::WORLD_MAP_POINT_PARAM_ST *p,
 
 std::vector<goblin::HighlightPoint> goblin::focus_highlight_points()
 {
+    const auto ap_checks = ap::cache().active_check_states(ap_now_ms());
     std::vector<HighlightPoint> out;
     const int focus = g_focus_category;
     if (focus < 0) return out;
@@ -555,11 +597,109 @@ std::vector<goblin::HighlightPoint> goblin::focus_highlight_points()
         if (static_cast<int>(cr.cat) != focus || cr.region_id != g_focus_region) continue;
         // Only ring markers whose icon is actually shown: not collected/hidden, and not
         // gated off by a group-2 ENABLE flag (switched-chest absent variant / pre-event area).
-        if (row_is_hidden(cr) || row_group2_gate_off(cr.p)) continue;
+        if (!ap_row_allowed(ap_checks.get(), cr.lot_type, cr.lot_id) ||
+            row_is_hidden(cr) || row_group2_gate_off(cr.p)) continue;
         HighlightPoint hp{};
         if (row_marker_info(cr.p, hp)) out.push_back(hp);
     }
     return out;
+}
+
+
+// Only copied positions survive between frames. No game row pointer is cached.
+const std::vector<goblin::APStylePoint>& goblin::ap_style_points()
+{
+    static std::vector<APStylePoint> points;
+    static uint64_t last_refresh = 0, last_generation = 0, last_checks = 0;
+    static unsigned last_options = 0;
+    static int last_focus = -2;
+    static int32_t last_region = -2;
+    static float last_scale = 0;
+    const auto now = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count());
+    const auto snapshot = ap::cache().active_lot_styles(now);
+    const auto checks = ap::cache().active_check_states(now);
+    const auto style_generation = snapshot ? snapshot->generation : 0;
+    const auto check_generation = checks ? checks->generation : 0;
+    const float scale = std::isfinite(config::apProgressionScale)
+        ? std::clamp(config::apProgressionScale, 1.0f, 3.0f) : 1.5f;
+    if (!g_param_injection_active || (!snapshot && !checks))
+    {
+        points.clear();
+        last_generation = 0;
+        return points;
+    }
+    if (style_generation == last_generation && check_generation == last_checks &&
+        last_options == ap_filter_options() && last_focus == g_focus_category &&
+        last_region == g_focus_region && last_scale == scale &&
+        now >= last_refresh && now - last_refresh < 100)
+        return points;
+    last_generation = style_generation;
+    last_checks = check_generation;
+    last_options = ap_filter_options();
+    last_focus = g_focus_category;
+    last_region = g_focus_region;
+    last_scale = scale;
+    last_refresh = now;
+    points.clear();
+    // Bounded to ten scans/second while enabled. Cheap lot membership precedes flag reads.
+    std::unordered_map<uint64_t, uint32_t> styles;
+    if (snapshot) for (const auto& entry : snapshot->entries)
+        styles.emplace((static_cast<uint64_t>(entry.lot_table) << 32) | entry.lot_row, entry.style);
+    if (checks) for (const auto& [key, flags] : checks->flags)
+        if (flags & MFG_AP_PROGRESSION) styles.try_emplace(key, MFG_AP_STYLE_ORANGE);
+    std::unordered_map<uint64_t, size_t> multiplicity;
+    for (const auto& cr : g_category_rows)
+    {
+        const uint64_t key = (static_cast<uint64_t>(cr.lot_type) << 32) | cr.lot_id;
+        if (styles.contains(key)) ++multiplicity[key];
+    }
+    for (const auto& cr : g_category_rows)
+    {
+        const uint64_t key = (static_cast<uint64_t>(cr.lot_type) << 32) | cr.lot_id;
+        const auto style = styles.find(key);
+        if (style == styles.end() || !cr.p) continue;
+        uint32_t check_flags = 0;
+        if (checks)
+        {
+            const auto state = checks->flags.find(key);
+            if (state != checks->flags.end()) check_flags = state->second;
+        }
+        const auto marker_style = ap::check_marker_style(style->second, check_flags, multiplicity[key]);
+        if (marker_style == MFG_AP_STYLE_NORMAL) continue;
+        const bool eligible = g_focus_category >= 0
+            ? static_cast<int>(cr.cat) == g_focus_category && cr.region_id == g_focus_region
+            : is_category_enabled(cr.cat);
+        if (!ap_row_allowed(checks.get(), cr.lot_type, cr.lot_id) ||
+            !eligible || cr.p->disableParam_NT ||
+            (cr.p->eventFlagId && !flag_is_set(cr.p->eventFlagId)) ||
+            row_is_hidden(cr) || row_group2_gate_off(cr.p))
+            continue;
+        unsigned* enabled[8];
+        enable_flag_ptrs(cr.p, enabled);
+        bool blocked = false;
+        for (const auto* flag : enabled)
+            if (*flag && !flag_is_set(*flag)) { blocked = true; break; }
+        if (blocked) continue;
+        // Textless entries dropped by the game must not get a floating ring.
+        if (!cr.p->isEnableNoText && cr.p->textId1 <= 0 && cr.p->textId2 <= 0 &&
+            cr.p->textId3 <= 0 && cr.p->textId4 <= 0 && cr.p->textId5 <= 0 &&
+            cr.p->textId6 <= 0 && cr.p->textId7 <= 0 && cr.p->textId8 <= 0)
+            continue;
+        APStylePoint point{};
+        if (row_marker_info(cr.p, point.point))
+        {
+            point.style = static_cast<uint8_t>(marker_style);
+            if (checks)
+            {
+                const auto state = checks->flags.find(key);
+                if (state != checks->flags.end() && (state->second & MFG_AP_PROGRESSION))
+                    point.scale = scale;
+            }
+            points.push_back(point);
+        }
+    }
+    return points;
 }
 
 std::unordered_set<uint64_t> goblin::hidden_marker_original_ids()
@@ -840,6 +980,8 @@ void goblin::inject_map_entries()
             CategoryRow cr{};
             cr.p = wp;
             cr.cat = all_rows[i].category;
+            cr.lot_id = all_rows[i].lotId;
+            cr.lot_type = all_rows[i].lotType;
             cr.row_id = static_cast<uint64_t>(all_rows[i].row_id);
             cr.original_row_id = all_rows[i].original_row_id;
             cr.baked_cleared = wp->clearedEventFlagId;
@@ -1311,6 +1453,7 @@ static bool gamepad_combo_held()
 // from the refresh thread when the collected set changes. Idempotent.
 void goblin::apply_category_visibility()
 {
+    const auto ap_checks = ap::cache().active_check_states(ap_now_ms());
     const int focus = g_focus_category;
     for (auto &cr : g_category_rows)
     {
@@ -1321,7 +1464,7 @@ void goblin::apply_category_visibility()
         const bool eligible =
             (focus >= 0) ? (static_cast<int>(cr.cat) == focus && cr.region_id == g_focus_region)
                          : is_category_enabled(cr.cat);
-        bool show = eligible &&
+        bool show = eligible && ap_row_allowed(ap_checks.get(), cr.lot_type, cr.lot_id) &&
                     !collected::is_row_collected(cr.row_id) &&
                     !kindling::is_row_collected(cr.row_id) &&
                     !is_manually_hidden(cr.p);  // user-hidden markers stay hidden
@@ -1996,6 +2139,17 @@ void goblin::refresh_loot_from_itemlot()
                  updated, relabeled, not_found, no_flag, g_lot_backed_rows.size());
 }
 
+static bool apply_ap_visibility_seh()
+{
+    __try
+    {
+        goblin::apply_category_visibility();
+        goblin::apply_focus_highlight();
+        return true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+
 void goblin::menu_auto_toggle_loop()
 {
     bool prev_user_disabled = g_icons_user_disabled.load();
@@ -2003,6 +2157,7 @@ void goblin::menu_auto_toggle_loop()
     while (true)
     {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        refresh_ap_check_filters();
 
         // Show the native banner when the user flips the master-off via hotkey.
         // Driven from this thread (the param-state owner) so all game-state

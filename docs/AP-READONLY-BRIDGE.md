@@ -6,7 +6,9 @@ baseline remains upstream a254433 (2.0.6); do not label its rebuilt output 2.1.3
 
 The C ABI is in include/mfg_ap_readonly_v1.h, mirrored in the AP client's
 docs/include directory. The client explicitly requests it with !mfgprobe.
-No DLL is automatically loaded and no AP completion or presentation is written.
+No DLL is automatically loaded and no AP completion is written. The optional
+presentation extension is documented in AP-PIN-COLORS.md; it adds leased overlay
+rings while preserving the original read-only hover interface.
 
 ## Publication and identity
 
