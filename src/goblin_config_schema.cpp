@@ -18,6 +18,8 @@ namespace goblin::config
     // just the checks the tracker says you can reach now, which is both the useful default
     // and far fewer pins to build.
     bool apChecksOnly = true, apProgressionOnly = false, apInLogicOnly = true;
+    bool pruneHiddenPinsAtBuild = true;  // key prune_hidden_pins_at_build: strip dispMask on
+                                         // settings-hidden rows for the duration of the pin build
     bool fastMapProfile = false;
     bool fastMapOpen = true;          // key fast_map_open: skip redundant relayout on re-open + amortize the first open
     // (icon/resource injection is unconditional - it IS how icons render without a gfx; no ini toggle.)
@@ -126,6 +128,9 @@ namespace
             {"Goblin", nullptr, false, {
                 B("require_map_fragments", requireMapFragments, "true",
                   "Require map fragment discovery before showing icons in that area"),
+                IniEntry{"prune_hidden_pins_at_build", IniType::Bool, &cfg::pruneHiddenPinsAtBuild, "true",
+                         "Skip building map pins for markers that are hidden anyway (category off, collected, hidden, AP-filtered).\nMakes a crowded map much cheaper to open. Turning a category back ON then needs a map reopen to show it.",
+                         false, nullptr},
                 B("fast_map_profile", fastMapProfile, "false",
                   "Diagnostic: measure 30 seconds of map layout calls without skipping work. Restart required; overrides fast_map_open."),
                 IniEntry{"fast_map_open", IniType::Bool, &cfg::fastMapOpen, "true",

@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace goblin::kindling
 {
@@ -20,6 +21,9 @@ namespace goblin::kindling
 
     /// True if the row is currently considered collected (hidden).
     bool is_row_collected(uint64_t row_id);
+
+    /// Membership-equivalent snapshot for passes that test every injected row.
+    std::unordered_set<uint64_t> collected_snapshot();
 
     /// Register the param row pointer so refresh() can flip areaNo in-place.
     /// Same trick as goblin::collected - write 0x20 = 99 to hide, restore original.

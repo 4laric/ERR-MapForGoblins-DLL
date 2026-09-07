@@ -676,6 +676,17 @@ bool goblin::kindling::is_row_collected(uint64_t row_id)
     return false;
 }
 
+// Membership-equivalent flat snapshot for whole-table passes: the set itself plus
+// every ORIGINAL id whose remapped dynamic id is collected, so a lookup in the
+// result answers exactly what is_row_collected() would.
+std::unordered_set<uint64_t> goblin::kindling::collected_snapshot()
+{
+    std::unordered_set<uint64_t> out(g_collected_rows.begin(), g_collected_rows.end());
+    for (const auto &[original, dynamic_id] : g_original_to_dynamic)
+        if (g_collected_rows.count(dynamic_id)) out.insert(original);
+    return out;
+}
+
 int goblin::kindling::collected_count()
 {
     return (int)g_collected_rows.size();
