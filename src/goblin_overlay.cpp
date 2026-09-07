@@ -2484,6 +2484,7 @@ void overlay_thread()
         // 2026-09-07, so a connected client alone must not cost us a shown window.
         const bool projecting = goblin::focus_category() >= 0 &&
                                 goblin::maphover::map_dialog() != nullptr;
+        bool just_hidden = false;
         {
             static bool win_shown = false;
             static bool win_clickthru = false;  // current WS_EX_TRANSPARENT state
@@ -2512,6 +2513,7 @@ void overlay_thread()
                     SetWindowPos(g_hwnd, HWND_TOPMOST, 0, 0, 0, 0,
                                  SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
                 win_shown = want;
+                just_hidden = !want;   // clear the surface once on the way down
             }
         }
         if (open && game_focused)
@@ -2553,9 +2555,16 @@ void overlay_thread()
         }
         else
         {
-            // Menu closed, nothing hovered: present a fully-transparent frame.
-            render_frame(false);
-            Sleep(16); // idle pacing while closed (no vsync wait from a cleared present)
+            // Menu closed, nothing hovered: the window is hidden (this branch is
+            // reached only when `want` was false). Clear the surface ONCE, on the
+            // frame we hide, and then present nothing: a hidden window needs no
+            // content, and on the Proton/layered path every one of those "empty"
+            // frames was a full-backbuffer GPU readback + memcpy + UpdateLayeredWindow
+            // at 60 Hz. The next shown frame always draws before/with the ShowWindow
+            // above, so nothing stale can appear.
+            if (just_hidden)
+                render_frame(false);
+            Sleep(16); // idle pacing while closed (no vsync wait to pace us here)
         }
     }
 }
