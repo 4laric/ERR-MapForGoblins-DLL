@@ -616,6 +616,7 @@ const std::vector<goblin::APStylePoint>& goblin::ap_style_points()
     static int last_focus = -2;
     static int32_t last_region = -2;
     static float last_scale = 0;
+    static bool last_rings = false;
     const auto now = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now().time_since_epoch()).count());
     const auto snapshot = ap::cache().active_lot_styles(now);
@@ -624,6 +625,12 @@ const std::vector<goblin::APStylePoint>& goblin::ap_style_points()
     const auto check_generation = checks ? checks->generation : 0;
     const float scale = std::isfinite(config::apProgressionScale)
         ? std::clamp(config::apProgressionScale, 1.0f, 3.0f) : 1.5f;
+    // ap_progression_rings (default off): the orange progression ring is one of TWO ring sources
+    // here; the other is the client's lot-style lease (yellow hints), which stays. With rings
+    // off the progression bit is masked before the style decision, so a hinted progression check
+    // keeps its yellow ring and an unhinted one draws nothing -- Progression only / F6 still
+    // carry the progression meaning.
+    const bool rings = config::apProgressionRings;
     if (!g_param_injection_active || (!snapshot && !checks))
     {
         points.clear();
@@ -632,7 +639,7 @@ const std::vector<goblin::APStylePoint>& goblin::ap_style_points()
     }
     if (style_generation == last_generation && check_generation == last_checks &&
         last_options == ap_filter_options() && last_focus == g_focus_category &&
-        last_region == g_focus_region && last_scale == scale &&
+        last_region == g_focus_region && last_scale == scale && last_rings == rings &&
         now >= last_refresh && now - last_refresh < 100)
         return points;
     last_generation = style_generation;
@@ -641,13 +648,14 @@ const std::vector<goblin::APStylePoint>& goblin::ap_style_points()
     last_focus = g_focus_category;
     last_region = g_focus_region;
     last_scale = scale;
+    last_rings = rings;
     last_refresh = now;
     points.clear();
     // Bounded to ten scans/second while enabled. Cheap lot membership precedes flag reads.
     std::unordered_map<uint64_t, uint32_t> styles;
     if (snapshot) for (const auto& entry : snapshot->entries)
         styles.emplace((static_cast<uint64_t>(entry.lot_table) << 32) | entry.lot_row, entry.style);
-    if (checks) for (const auto& [key, flags] : checks->flags)
+    if (checks && rings) for (const auto& [key, flags] : checks->flags)
         if (flags & MFG_AP_PROGRESSION) styles.try_emplace(key, MFG_AP_STYLE_ORANGE);
     std::unordered_map<uint64_t, size_t> multiplicity;
     for (const auto& cr : g_category_rows)
@@ -666,6 +674,7 @@ const std::vector<goblin::APStylePoint>& goblin::ap_style_points()
             const auto state = checks->flags.find(key);
             if (state != checks->flags.end()) check_flags = state->second;
         }
+        if (!rings) check_flags &= ~static_cast<uint32_t>(MFG_AP_PROGRESSION);
         const auto marker_style = ap::check_marker_style(style->second, check_flags, multiplicity[key], checks != nullptr);
         if (marker_style == MFG_AP_STYLE_NORMAL) continue;
         const bool eligible = g_focus_category >= 0
@@ -694,7 +703,7 @@ const std::vector<goblin::APStylePoint>& goblin::ap_style_points()
             if (checks)
             {
                 const auto state = checks->flags.find(key);
-                if (state != checks->flags.end() && (state->second & MFG_AP_PROGRESSION))
+                if (rings && state != checks->flags.end() && (state->second & MFG_AP_PROGRESSION))
                     point.scale = scale;
             }
             points.push_back(point);

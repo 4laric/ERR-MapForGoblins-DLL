@@ -15,6 +15,7 @@ namespace goblin::config
     bool debugLogging = false;        // key debug_logging: verbose diagnostics; also gates the dev-only
                                       // worldmap SpriteDef/dict dumps + RM2::Execute trace in goblin_gfx_probe.
     bool apChecksOnly = true, apProgressionOnly = false, apInLogicOnly = false;
+    bool apProgressionRings = false;  // key ap_progression_rings: orange rings on progression checks (hint rings are unaffected)
     float apProgressionScale = 1.5f;
     bool fastMapProfile = false;
     bool fastMapOpen = true;          // key fast_map_open: skip redundant relayout on re-open + amortize the first open
@@ -138,6 +139,8 @@ namespace
                   "Show only pins matched to progression checks in your connected seed."),
                 B("ap_in_logic_only", apInLogicOnly, "false",
                   "Uses tracker region access; does not evaluate extra quest/puzzle conditions. Requires Archipelago map integration."),
+                B("ap_progression_rings", apProgressionRings, "false",
+                  "Draw orange rings around progression checks. Off by default (2026-09-06): the seed surface can be most of the map, so the rings buried the pins they were meant to lift. Yellow hint rings are unaffected; the F6 tracker and Progression only still mark progression."),
                 IniEntry{"ap_progression_scale", IniType::Float, &cfg::apProgressionScale, "1.5",
                          "Makes progression markers easier to spot while Archipelago map integration is active (1.0-3.0).",
                          false, nullptr},
