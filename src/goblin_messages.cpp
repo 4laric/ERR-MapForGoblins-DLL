@@ -1,4 +1,5 @@
 #include "goblin_messages.hpp"
+#include "goblin_live_label.hpp"
 #include "goblin_map_data.hpp"
 #include "goblin_enemy_names.hpp"
 #include "goblin_item_fallback.hpp"
@@ -47,6 +48,11 @@ int32_t goblin::remap_textid(int32_t encoded)
 {
     auto it = g_textid_remap.find(encoded);
     return it != g_textid_remap.end() ? it->second : encoded;
+}
+
+int32_t goblin::live_item_textid(int32_t encoded, int32_t fallback)
+{
+    return resolved_item_label(encoded, fallback, g_textid_remap, goblin::lookup_text);
 }
 
 // Toggle state for PlaceName FMG (slot 19). Only this slot is a pointer

@@ -37,4 +37,7 @@ namespace goblin
     /// unchanged. MUST be called for every textId written into a live
     /// WorldMapPointParam row AFTER setup_messages() has run. Identity until then.
     int32_t remap_textid(int32_t encoded);
+
+    /// Resolve only successfully copied item names, otherwise retain fallback.
+    int32_t live_item_textid(int32_t encoded, int32_t fallback);
 }

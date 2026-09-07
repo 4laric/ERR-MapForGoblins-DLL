@@ -4,8 +4,9 @@ The Archipelago settings in the MFG overlay provide three independent filters:
 
 - **AP checks only** (default on while AP map integration is active): show pins
   matched to checks in the connected seed.
-- **Progression surface only**: show checks eligible to hold progression in that
-  seed. This does not reveal the randomized item placed there.
+- **Progression surface only**: show the client's progression targets for that
+  seed. The paired AP client redirects sweep-granted slots to their granting
+  boss. This does not reveal the randomized item placed there.
 - **In logic only**: use the client's existing tracker region-access state.
   Extra quest/puzzle conditions are not evaluated; unknown regions are excluded.
 
@@ -26,6 +27,20 @@ seeds, disconnecting or disabling integration withdraws that state; a short leas
 also restores ordinary MFG visibility if the client stops refreshing. Filtering
 never makes a collected, manually hidden or game-gated pin visible. Category focus
 cannot bypass AP filters.
+
+## Boss marker identity
+
+Capability `MFG_AP_CAP_BOSS_CHECK_STATES_V1` (8) extends the existing check-state
+snapshot: `lot_table=3` means `MFG_AP_BOSS_DEFEAT_FLAG`, and `lot_row` carries
+the exact nonzero defeat flag. Ordinary map/enemy lots remain kinds 1/2.
+The older style and hover APIs do not accept kind 3.
+
+Native boss pins without a lot use their captured original cleared flag (or
+original first-line disable flag if the cleared flag is absent), so changing
+visibility cannot change their identity. This covers the vanilla profile's 207
+boss pins, including Godrick (10000800) and Limgrave Tree Sentinel (1042360800).
+Filters and progression halos use this same identity. A map lot numbered
+10000800 remains distinct from Godrick's defeat flag.
 
 ## Gathering-node preset
 

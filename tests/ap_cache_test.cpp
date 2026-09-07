@@ -17,7 +17,32 @@ extern "C" uint32_t __cdecl MFG_AP_SET_CHECK_STATES_V1(
 
 static void test_check_presentation()
 {
+    using goblin::ap::marker_check_identity;
+    const auto godrick = marker_check_identity(0, 0, true, 10000800, 10000800);
+    const auto sentinel = marker_check_identity(0, 0, true, 0, 1042360800);
+    assert(godrick.kind == 3 && godrick.row == 10000800);
+    assert(sentinel.kind == 3 && sentinel.row == 1042360800);
+    assert(marker_check_identity(1, 30100, true, 1042360800, 0).kind == 1);
+    assert(marker_check_identity(0, 0, false, 10000800, 10000800).kind == 0);
+    assert(marker_check_identity(0, 0, true, 0, 0).kind == 0);
+    HoverCache bosses;
+    bosses.set_active(true);
+    MFG_AP_CheckStateV1 boss_states[] = {{3, godrick.row, 15}, {3, sentinel.row, 3}, {1, godrick.row, 1}};
+    assert(bosses.set_check_states(1, boss_states, 3, 1000, 100) == MFG_AP_OK);
+    const auto snapshot = bosses.active_check_states(101);
+    assert(snapshot);
+    assert(goblin::ap::check_filter_allows(snapshot.get(), 3, godrick.row, true, true, true));
+    assert(!goblin::ap::check_filter_allows(snapshot.get(), 3, sentinel.row, true, true, true));
+    assert(!goblin::ap::check_filter_allows(snapshot.get(), 1, godrick.row, true, true, false));
+    MFG_AP_LotStyleV1 invalid_style{3, godrick.row, MFG_AP_STYLE_ORANGE};
+    assert(bosses.set_lot_styles(1, &invalid_style, 1, 1000, 100) == MFG_AP_BAD_ARGUMENT);
     using goblin::ap::check_marker_style;
+    // An old orange lease cannot override a newer seed classification.
+    assert(check_marker_style(MFG_AP_STYLE_ORANGE, MFG_AP_CHECK, 1, true) == MFG_AP_STYLE_NORMAL);
+    assert(check_marker_style(MFG_AP_STYLE_ORANGE, 0, 1, true) == MFG_AP_STYLE_NORMAL);
+    assert(check_marker_style(MFG_AP_STYLE_ORANGE, 3, 1, true) == MFG_AP_STYLE_ORANGE);
+    assert(check_marker_style(MFG_AP_STYLE_YELLOW, MFG_AP_CHECK, 1, true) == MFG_AP_STYLE_YELLOW);
+    assert(check_marker_style(MFG_AP_STYLE_ORANGE, 0, 1, false) == MFG_AP_STYLE_ORANGE);
     assert(check_marker_style(MFG_AP_STYLE_YELLOW, MFG_AP_CHECK, 2) == MFG_AP_STYLE_NORMAL);
     assert(check_marker_style(MFG_AP_STYLE_ORANGE, 0, 2) == MFG_AP_STYLE_NORMAL);
     for (size_t representations : {size_t{2}, size_t{12}})
@@ -89,7 +114,7 @@ static void test_check_states()
         assert(cache.set_check_states(1, &bad, 1, 3000, 1001) == MFG_AP_BAD_ARGUMENT);
         assert(cache.active_check_states(1001)->generation == snapshot->generation);
     }
-    for (auto bad : {MFG_AP_CheckStateV1{0, 10, 1}, MFG_AP_CheckStateV1{3, 10, 1},
+    for (auto bad : {MFG_AP_CheckStateV1{0, 10, 1}, MFG_AP_CheckStateV1{4, 10, 1},
                      MFG_AP_CheckStateV1{1, 0, 1}})
         assert(cache.set_check_states(1, &bad, 1, 3000, 1001) == MFG_AP_BAD_ARGUMENT);
     states[1] = states[0];
@@ -141,7 +166,7 @@ int main()
     assert(cache.query(2, &info, sizeof(info)) == MFG_AP_UNSUPPORTED_ABI);
     assert(cache.query(1, nullptr, sizeof(info)) == MFG_AP_BAD_ARGUMENT);
     assert(cache.query(1, &info, sizeof(info) - 1) == MFG_AP_BAD_ARGUMENT);
-    assert(cache.query(1, &info, sizeof(info)) == MFG_AP_OK && info.capabilities == (MFG_AP_CAP_LOT_STYLE_OVERLAY_V1 | MFG_AP_CAP_CHECK_STATES_V1));
+    assert(cache.query(1, &info, sizeof(info)) == MFG_AP_OK && info.capabilities == (MFG_AP_CAP_LOT_STYLE_OVERLAY_V1 | MFG_AP_CAP_CHECK_STATES_V1 | MFG_AP_CAP_BOSS_CHECK_STATES_V1));
     assert(cache.copy(&hover, sizeof(hover), 0) == MFG_AP_UNAVAILABLE);
     assert(!cache.install_rows({{0, 1, 1, 10}}));
     assert(!cache.install_rows({{100, 1, 0, 10}}));
@@ -154,7 +179,7 @@ int main()
     assert(cache.copy(&hover, sizeof(hover), 0) == MFG_AP_UNAVAILABLE);
     cache.set_hooks_ready(true);
     assert(cache.query(1, &info, sizeof(info)) == MFG_AP_OK &&
-           info.capabilities == (MFG_AP_CAP_HOVER_V1 | MFG_AP_CAP_LOT_STYLE_OVERLAY_V1 | MFG_AP_CAP_CHECK_STATES_V1));
+           info.capabilities == (MFG_AP_CAP_HOVER_V1 | MFG_AP_CAP_LOT_STYLE_OVERLAY_V1 | MFG_AP_CAP_CHECK_STATES_V1 | MFG_AP_CAP_BOSS_CHECK_STATES_V1));
     assert(cache.copy(&hover, sizeof(hover), 0) == MFG_AP_OK &&
            hover.status == MFG_AP_NO_HOVER && hover.generation > 0);
     cache.observe(100, 1000);
@@ -216,7 +241,7 @@ int main()
         std::chrono::steady_clock::now().time_since_epoch()).count();
     live.observe(100, static_cast<uint64_t>(now));
     assert(MFG_AP_QUERY_V1(1, &info, sizeof(info)) == MFG_AP_OK);
-    assert(info.capabilities == (MFG_AP_CAP_HOVER_V1 | MFG_AP_CAP_LOT_STYLE_OVERLAY_V1 | MFG_AP_CAP_CHECK_STATES_V1));
+    assert(info.capabilities == (MFG_AP_CAP_HOVER_V1 | MFG_AP_CAP_LOT_STYLE_OVERLAY_V1 | MFG_AP_CAP_CHECK_STATES_V1 | MFG_AP_CAP_BOSS_CHECK_STATES_V1));
     assert(MFG_AP_COPY_HOVER_V1(&buffer.value, sizeof(buffer.value)) == MFG_AP_OK);
     assert(buffer.value.handle == 1 && buffer.value.lot_row == 10);
     assert(buffer.guard == 0xabcdef);
