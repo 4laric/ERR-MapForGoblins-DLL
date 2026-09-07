@@ -94,6 +94,18 @@ void *modutils::scan(const ScanArgs &args)
     return nullptr;
 }
 
+void *modutils::scan_unique(const std::string &aob)
+{
+    auto *first = reinterpret_cast<unsigned char *>(
+        Pattern16::scan(memory.data(), memory.size(), aob));
+    if (!first) throw runtime_error("pattern has no match");
+    const size_t offset = static_cast<size_t>(first - memory.data()) + 1;
+    if (offset < memory.size() &&
+        Pattern16::scan(memory.data() + offset, memory.size() - offset, aob))
+        throw runtime_error("pattern is ambiguous");
+    return first;
+}
+
 void modutils::hook(void *function, void *detour, void **trampoline)
 {
     auto mh_status = MH_CreateHook(function, detour, trampoline);

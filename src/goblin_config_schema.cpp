@@ -14,6 +14,10 @@ namespace goblin::config
     bool requireMapFragments = true;
     bool debugLogging = false;        // key debug_logging: verbose diagnostics; also gates the dev-only
                                       // worldmap SpriteDef/dict dumps + RM2::Execute trace in goblin_gfx_probe.
+    bool apChecksOnly = true, apProgressionOnly = false, apInLogicOnly = false;
+    bool apProgressionRings = false;  // key ap_progression_rings: orange rings on progression checks (hint rings are unaffected)
+    float apProgressionScale = 1.5f;
+    bool fastMapProfile = false;
     bool fastMapOpen = true;          // key fast_map_open: skip redundant relayout on re-open + amortize the first open
     // (icon/resource injection is unconditional - it IS how icons render without a gfx; no ini toggle.)
 
@@ -121,9 +125,25 @@ namespace
             {"Goblin", nullptr, false, {
                 B("require_map_fragments", requireMapFragments, "true",
                   "Require map fragment discovery before showing icons in that area"),
+                B("fast_map_profile", fastMapProfile, "false",
+                  "Diagnostic: measure 30 seconds of map layout calls without skipping work. Restart required; overrides fast_map_open."),
                 IniEntry{"fast_map_open", IniType::Bool, &cfg::fastMapOpen, "true",
                          "BETA: makes the world map open faster when many icons are shown.\nTurn off if the map glitches or crashes.",
                          false, "fast_map_reopen"},
+            }},
+
+            {"Archipelago", "Filters apply while Archipelago map integration is active. Some checks have no matched pin.", false, {
+                B("ap_checks_only", apChecksOnly, "true",
+                  "Show pins matched to checks in your connected seed. Unmatched pins are hidden; some may still be checks."),
+                B("ap_progression_only", apProgressionOnly, "false",
+                  "Show only pins matched to progression checks in your connected seed."),
+                B("ap_in_logic_only", apInLogicOnly, "false",
+                  "Uses tracker region access; does not evaluate extra quest/puzzle conditions. Requires Archipelago map integration."),
+                B("ap_progression_rings", apProgressionRings, "false",
+                  "Draw orange rings around progression checks. Off by default (2026-09-06): the seed surface can be most of the map, so the rings buried the pins they were meant to lift. Yellow hint rings are unaffected; the F6 tracker and Progression only still mark progression."),
+                IniEntry{"ap_progression_scale", IniType::Float, &cfg::apProgressionScale, "1.5",
+                         "Makes progression markers easier to spot while Archipelago map integration is active (1.0-3.0).",
+                         false, nullptr},
             }},
 
             {"Equipment", nullptr, false, {

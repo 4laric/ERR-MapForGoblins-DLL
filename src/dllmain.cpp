@@ -257,7 +257,7 @@ static void setup_mod()
     // applies the master-off flag (set by the toggle hotkey OR the overlay's
     // "Show map icons" checkbox). Run it whenever EITHER path can set that flag,
     // so the overlay's master switch works even if the toggle hotkey is disabled.
-    if (goblin::config::enableToggleHotkey || goblin::config::enableOverlay)
+    // AP leases also need the owner watcher when overlay and hotkeys are disabled.
     {
         std::thread(goblin::menu_auto_toggle_loop).detach();
         spdlog::info("Icon-state watcher started (icons EXPANDED always; master show/hide via hotkey or overlay)");
@@ -273,6 +273,7 @@ static void setup_mod()
         auto elapsed = std::chrono::steady_clock::now() - start;
         bool fast_phase = elapsed < std::chrono::seconds(30);
         std::this_thread::sleep_for(fast_phase ? std::chrono::milliseconds(100) : std::chrono::seconds(2));
+        goblin::map_timing::poll_profile();
 
         try
         {

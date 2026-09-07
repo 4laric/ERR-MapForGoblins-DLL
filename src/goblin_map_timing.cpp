@@ -1,6 +1,9 @@
 #include "goblin_map_timing.hpp"
 
 #include "goblin_config.hpp"
+#include "goblin_map_profile.hpp"
+#include <chrono>
+#include <cstring>
 #include "modutils.hpp"
 
 #include <spdlog/spdlog.h>
@@ -32,6 +35,37 @@ namespace
     using DtorFn = void *(void *);
     Fn *o_refresh = nullptr, *o_ce390 = nullptr;
     DtorFn *o_wmd_dtor = nullptr;
+
+    // Startup-only opt-in. It overrides the legacy optimizer, including after
+    // collection ends: every original call runs, without queued game pointers.
+    bool g_profile_mode = false;
+    std::atomic<bool> g_profile_done{false};
+    std::mutex g_profile_mutex;
+    goblin::map_timing::ProfileWindow g_profile;
+    using Clock = std::chrono::steady_clock;
+    uint64_t now_ms() {
+        return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+            Clock::now().time_since_epoch()).count());
+    }
+    void *profile_call(unsigned bucket, Fn *original, void *a, void *b, void *c, void *d)
+    {
+        if (g_profile_done.load(std::memory_order_relaxed)) return original(a, b, c, d);
+        bool sample;
+        {
+            std::lock_guard<std::mutex> lock(g_profile_mutex);
+            sample = g_profile.begin(now_ms());
+        }
+        if (!sample) return original(a, b, c, d);
+        const auto start = Clock::now();
+        void *result = original(a, b, c, d);
+        const auto ns = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+            Clock::now() - start).count());
+        {
+            std::lock_guard<std::mutex> lock(g_profile_mutex);
+            g_profile.finish(bucket, ns, GetCurrentThreadId());
+        }
+        return result;
+    }
 
     uintptr_t g_map_callsite = 0;       // ret addr of the map's per-marker refresh call
     uintptr_t g_ce_gate[3] = {0, 0, 0}; // ret addrs of the 3 ce390 calls
@@ -85,6 +119,9 @@ namespace
     {
         if (!g_ready.load(std::memory_order_acquire)) return o_refresh(a, b, c, d);
         uintptr_t ret = (uintptr_t)_ReturnAddress();
+        if (g_profile_mode)
+            return ret == g_map_callsite ? profile_call(0, o_refresh, a, b, c, d)
+                                        : o_refresh(a, b, c, d);
         if (ret == g_map_callsite) // the map's per-marker build call (other UI left as-is)
         {
             // RE-open: reuse the existing layout, no relayout needed (fastest).
@@ -108,6 +145,11 @@ namespace
     {
         if (!g_ready.load(std::memory_order_acquire)) return o_ce390(a, b, c, d);
         uintptr_t ret = (uintptr_t)_ReturnAddress();
+        if (g_profile_mode) {
+            for (unsigned i = 0; i < 3; ++i)
+                if (ret == g_ce_gate[i]) return profile_call(i + 1, o_ce390, a, b, c, d);
+            return o_ce390(a, b, c, d);
+        }
         bool map_site = (ret == g_ce_gate[0] || ret == g_ce_gate[1] || ret == g_ce_gate[2]);
         // Drive the first-open amortize replay + the build latch HERE, on the game's
         // UI thread, once per map-layout pass. The overlay used to call on_present()
@@ -142,6 +184,43 @@ namespace
 
 void goblin::map_timing::setup()
 {
+    char profile_env[8]{};
+    g_profile_mode = goblin::config::fastMapProfile ||
+        (GetEnvironmentVariableA("MFG_FASTMAP_PROFILE", profile_env, sizeof(profile_env)) == 1
+         && profile_env[0] == '1');
+    if (g_profile_mode) {
+        try {
+            auto *m = static_cast<unsigned char *>(modutils::scan_unique(
+                "48 8B 89 18 01 00 00 E8 ?? ?? ?? ?? 33 D2 48 8B CF E8 ?? ?? ?? ?? "
+                "BA 01 00 00 00 48 8B CF E8 ?? ?? ?? ?? BA 03 00 00 00 48 8B CF "
+                "E8 ?? ?? ?? ?? 48 8B 5C 24 30 B0 01"));
+            auto target = [m](size_t offset) -> void * {
+                int32_t displacement;
+                std::memcpy(&displacement, m + offset + 1, sizeof(displacement));
+                return m + offset + 5 + displacement;
+            };
+            auto *refresh = modutils::scan_unique(
+                "48 89 5C 24 08 48 89 74 24 10 57 48 83 EC 20 48 8B 41 20 "
+                "48 8B D9 48 8B 50 10 48 8B");
+            auto *children = modutils::scan_unique(
+                "40 53 48 83 EC 50 33 C0 89 54 24 48 4C 8D 81 C8 00 00 00 89");
+            if (target(7) != refresh || target(17) != children ||
+                target(30) != children || target(43) != children)
+                throw std::runtime_error("map call targets do not match validated functions");
+            g_map_callsite = reinterpret_cast<uintptr_t>(m + 12);
+            g_ce_gate[0] = reinterpret_cast<uintptr_t>(m + 22);
+            g_ce_gate[1] = reinterpret_cast<uintptr_t>(m + 35);
+            g_ce_gate[2] = reinterpret_cast<uintptr_t>(m + 48);
+            modutils::hook<Fn>({.address = refresh}, refresh_detour, o_refresh);
+            modutils::hook<Fn>({.address = children}, ce390_detour, o_ce390);
+            g_ready.store(true, std::memory_order_release);
+            spdlog::info("[fastmap-profile] armed: 30 seconds from first map call; "
+                         "cumulative original-call timings, NOT frame times; optimizer bypassed");
+        } catch (const std::exception &e) {
+            spdlog::warn("[fastmap-profile] disabled: {}; optimizer not attempted", e.what());
+        }
+        return; // Never install the destructor or enter the legacy optimizer.
+    }
     if (!goblin::config::fastMapOpen) return;
 
     // Resolve the per-marker call sites by byte pattern (resilient to game updates):
@@ -189,5 +268,28 @@ void goblin::map_timing::setup()
     catch (const std::exception &e)
     {
         spdlog::warn("[fastmap] setup failed: {}", e.what());
+    }
+}
+
+
+// Called by the existing 100 ms / 2 s worker, independent of overlay/hotkeys.
+// No game pointers or game APIs are touched here; logs never run per marker.
+void goblin::map_timing::poll_profile()
+{
+    if (!g_profile_mode || !g_ready.load(std::memory_order_acquire) ||
+        g_profile_done.load(std::memory_order_relaxed)) return;
+    std::optional<ProfileReport> report;
+    {
+        std::lock_guard<std::mutex> lock(g_profile_mutex);
+        report = g_profile.poll(now_ms());
+    }
+    if (!report) return;
+    if (report->final) g_profile_done.store(true, std::memory_order_relaxed);
+    for (unsigned i = 0; i < report->buckets.size(); ++i) {
+        const auto &b = report->buckets[i];
+        spdlog::info("[fastmap-profile] elapsed_ms={} final={} pending_calls={} bucket={} calls={} "
+                     "original_us={} max_us={} first_thread={} mixed_threads={}",
+                     report->elapsed_ms, report->final, report->pending_calls, i, b.calls, b.ns / 1000,
+                     b.max_ns / 1000, b.first_thread, b.mixed_threads);
     }
 }
