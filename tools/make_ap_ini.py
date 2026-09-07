@@ -6,7 +6,8 @@ from pathlib import Path
 SETTINGS = {
     'Loot': {'show_material_nodes': 'false', 'show_crafting_materials': 'true'},
     'Archipelago': {'ap_checks_only': 'true', 'ap_progression_only': 'false',
-                    'ap_in_logic_only': 'false', 'ap_progression_scale': '1.5'},
+                    'ap_in_logic_only': 'false', 'ap_progression_rings': 'false',
+                    'ap_progression_scale': '1.5'},
 }
 
 def apply_preset(text):
