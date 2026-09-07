@@ -1,40 +1,33 @@
-# Optional AP hint / progression-surface rings
+# AP pin colouring (removed)
 
-The companion AP client publishes presentation styles for baked table-qualified
-lot identities. Style 1 is orange (seed progression eligibility), style 2 yellow
-(known hint). The client handles exact current-seed matching and unanimous
-candidate classification. The engine does not inspect randomized item placement.
+The on-map ring overlay that coloured pins orange (seed progression surface) and
+yellow (known hint) was **removed on 2026-09-07**. Nothing is drawn for lot
+styles any more, and the config keys `ap_progression_rings` and
+`ap_progression_scale` no longer exist.
 
-Enable **Color map pins (this session)** in F6 with the matching updated client.
-This is independent of following/recording hovers and of fast-map profiling.
-The native engine draws rings in its existing passive, click-through overlay;
-it does not change icon textures, flags, row visibility or focus.
+Why it went:
 
-Only injected pins with one native row for their table/lot are decorated.
-Duplicate native identities are withheld rather than guessing a site. The renderer
-requires active injection, enabled category/current focus, discovery/event gates,
-text enable gates, no hide/collection condition and a known current map layer.
-Unknown layers or failed/non-finite projections draw nothing.
+- On a real seed the progression surface is most of the map, so the rings buried
+  the pins they were meant to lift rather than highlighting anything.
+- Producing them cost up to ~25 live game-flag reads per styled row, ten times a
+  second, on top of a full pass over all 9,201 injected rows.
+- The rings are drawn in the separate topmost overlay window, so an AP client
+  merely holding a style lease forced that window to be shown and presented
+  every frame while the map was open, even with the F6 menu closed.
 
-The bounded snapshot API is declared in include/mfg_ap_readonly_v1.h. ABI1 layouts
-and hover exports are unchanged; capability bit 2 announces
-MFG_AP_SET_LOT_STYLES_V1. The setter copies up to 8192 unique identities, validates
-the entire batch, and replaces it atomically. A null/zero/zero call clears it.
-Nonempty snapshots require a 250..10000 ms lease; the client uses 3000 ms refreshed
-once per second. Disable, row retirement, clock reversal and expiry clear styles.
+What replaces it: the filters in `docs/AP-CHECK-FILTERS.md`. `ap_checks_only`
+and `ap_in_logic_only` (both on by default) leave only the reachable checks on
+the map, which is the same information the orange rings were approximating, and
+those pins are now pruned at map-build time instead of merely dimmed.
+Progression is still surfaced by `ap_progression_only` and by the F6 tracker.
 
-The render path keeps only copied positions between frames. Visibility is refreshed
-at most every 100 ms, with cheap style membership before flag checks; projection
-and viewport/layer culling happen per frame. Collection/category changes can take
-up to 100 ms to remove a ring. No work over rows occurs without an active snapshot.
-No claim of lower frame cost is made.
+## The client-facing API is unchanged
 
-Validation: actual exported setter and copied-cache tests cover malformed and
-duplicate batches, bounds, ownership, invalid-batch atomicity, clear, expiry,
-clock reversal, disable and row replacement under ASAN/UBSAN. A full Windows
-compile is a separate gate.
+`MFG_AP_SET_LOT_STYLES_V1` and capability bit `MFG_AP_CAP_LOT_STYLE_OVERLAY_V1`
+(2) are still exported and still validate exactly as before, so an existing
+client that publishes a style snapshot keeps receiving `MFG_AP_OK`. The accepted
+snapshot is simply never rendered. See `include/mfg_ap_readonly_v1.h`. Clients
+should stop publishing styles when convenient; there is no need to rush.
 
-Live acceptance remains necessary: compare orange pins to F6 surface checks, obtain
-a hint and verify yellow priority, collect/hide a pin, pan/zoom across all map layers,
-check discovery/story-gated pins, disable/reconnect, and compare dense-map frame cost.
-The existing map projection is not independently validated by these automated tests.
+The focus-highlight rings from the region-progress tab are a different feature
+and are untouched.

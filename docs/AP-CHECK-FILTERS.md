@@ -7,18 +7,39 @@ The Archipelago settings in the MFG overlay provide three independent filters:
 - **Progression surface only**: show the client's progression targets for that
   seed. The paired AP client redirects sweep-granted slots to their granting
   boss. This does not reveal the randomized item placed there.
-- **In logic only**: use the client's existing tracker region-access state.
-  Extra quest/puzzle conditions are not evaluated; unknown regions are excluded.
+- **In logic only** (default on since 2026-09-07): use the client's existing
+  tracker region-access state. Extra quest/puzzle conditions are not evaluated;
+  unknown regions are excluded.
+
+With the two defaults together (`ap_checks_only = true`, `ap_in_logic_only =
+true`) the map shows only pins matched to a check in your seed **that the
+tracker currently reports as reachable**: both conditions must hold for the same
+check. Turn `ap_in_logic_only` off to see the whole matched-check surface again.
 
 Combining the last two requires the same check to satisfy both conditions, even
 when several checks share a lot. Unmapped pins are hidden in checks-only mode;
 they are not thereby classified as definitively non-checks. The mapping currently
 covers 3,847 of the full catalog's 4,925 checks before seed options narrow it.
 
-Progression markers have a larger, thicker halo by default (1.5x, adjustable
-from 1x to 3x in Settings). This enlarges the marker's visible footprint without
-resizing the game's icon artwork. Existing orange progression/yellow hint colors
-remain intact. A hinted progression marker also receives the larger halo.
+Pin colouring (the orange progression / yellow hint rings and the
+`ap_progression_scale` halo) was removed on 2026-09-07 - see
+`docs/AP-PIN-COLORS.md`. Progression is surfaced by **Progression surface only**
+and by the F6 tracker.
+
+## Filtered pins are pruned, not just dimmed
+
+Since 2026-09-07 a row that these filters (or a category toggle, a collection, a
+manual hide, or an active focus) hide is stripped of its `dispMask` bits for the
+duration of the map's pin build, so the engine never creates a pin or a widget
+tree for it at all. The masks are restored the moment the build returns, so
+nothing else sees a mutated row. The INI key `prune_hidden_pins_at_build`
+(default `true`) turns this off for A/B testing.
+
+The one behavioural consequence: making a hidden marker VISIBLE again - enabling
+a category, clearing a focus, relaxing an AP filter, unhiding a marker - now
+takes effect on the **next map open**, not instantly on the open map. Hiding is
+still instant (it still runs through the live text-enable-flag path), as is a
+marker disappearing when you collect it.
 
 Enable the existing AP client's map colors or follow-pins workflow, or select
 **Enable map filters** in its optional map section. Filters
@@ -54,8 +75,7 @@ show_crafting_materials = true
 [Archipelago]
 ap_checks_only = true
 ap_progression_only = false
-ap_in_logic_only = false
-ap_progression_scale = 1.5
+ap_in_logic_only = true
 ```
 
 The supplied vanilla profile has 1,488 gathering-node pins, including 229 Trina's

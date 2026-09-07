@@ -1,4 +1,3 @@
-#include "goblin_ap_cache.hpp"
 #include <chrono>
 #include <cmath>
 // In-game config overlay: Dear ImGui drawn in a SEPARATE, INDEPENDENT transparent
@@ -398,8 +397,7 @@ void draw_section(const goblin::IniSection &sec, bool &changed)
         {
             if (goblin::profile_is_vanilla() && e.err_only)
                 continue;
-            if (std::strcmp(e.key, "ap_progression_scale") == 0 ||
-                std::strcmp(e.key, "overlay_font_scale") == 0 ||
+            if (std::strcmp(e.key, "overlay_font_scale") == 0 ||
                 std::strcmp(e.key, "overlay_opacity") == 0)
                 continue; // shown as prominent sliders at the top of the Settings tab
             if (std::strncmp(e.key, "overlay_window_", 15) == 0)
@@ -605,12 +603,6 @@ void draw_settings_tab()
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip))
         ImGui::SetTooltip("%s", tr::tr(tr::TextId::OverlayTextSizeTip, lang));
     slider_key("overlay_font_scale");
-
-    ImGui::SliderFloat("AP progression highlight size", &goblin::config::apProgressionScale,
-                       1.0f, 3.0f, "%.1fx");
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Makes progression markers easier to spot while Archipelago map integration is active.");
-    slider_key("ap_progression_scale");
 
     // Overlay panel opacity (window bg alpha). Persisted to overlay_opacity on close.
     ImGui::SetNextItemWidth(ImGui::GetFontSize() * 9.0f);
@@ -2175,39 +2167,6 @@ static void draw_map_highlights()
     }
 }
 
-// AP colors reuse the existing projection. Unknown layers and non-finite
-// coordinates draw nothing; no focus or visibility setting is changed here.
-static void draw_ap_map_colors()
-{
-    const int layer = goblin::maphover::map_layer();
-    if (layer < 0 || layer > 2) return;
-    goblin::mapproject::MapView view;
-    if (!goblin::mapproject::read_view(view)) return;
-    const auto& points = goblin::ap_style_points();
-    const auto& calibration = goblin::mapproject::calib();
-    const float width = static_cast<float>(g_back_w ? g_back_w : 1920);
-    const float height = static_cast<float>(g_back_h ? g_back_h : 1080);
-    const auto display = ImGui::GetIO().DisplaySize;
-    auto* draw = ImGui::GetForegroundDrawList();
-    for (const auto& styled : points)
-    {
-        const auto& p = styled.point;
-        if (p.layer != layer) continue;
-        float x = 0, y = 0;
-        if (!goblin::mapproject::project(p.area, p.gx, p.gz, p.px, p.pz,
-                                       view, calibration, width, height, x, y) ||
-            !std::isfinite(x) || !std::isfinite(y) ||
-            x < -24 || y < -24 || x > display.x + 24 || y > display.y + 24)
-            continue;
-        const ImU32 color = styled.style == MFG_AP_STYLE_YELLOW
-            ? IM_COL32(252, 233, 79, 245) : IM_COL32(252, 175, 62, 245);
-        const float radius = 16.0f * styled.scale;
-        draw->AddCircle(ImVec2(x, y), radius, color, 32, 2.5f * styled.scale);
-        if (styled.scale > 1.0f)
-            draw->AddCircle(ImVec2(x, y), radius + 4.0f, color, 32, 1.5f);
-    }
-}
-
 static void render_frame(bool draw)
 {
     __try
@@ -2521,12 +2480,9 @@ void overlay_thread()
         // the game is focused.
         // Highlight rings project onto the OPEN map even when the menu is closed and
         // nothing is hovered (the focus-set highlight from the region-progress tab).
-        const auto style_now = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now().time_since_epoch()).count());
-        const bool ap_coloring = goblin::maphover::map_dialog() != nullptr &&
-            (static_cast<bool>(goblin::ap::cache().active_lot_styles(style_now)) ||
-             static_cast<bool>(goblin::ap::cache().active_check_states(style_now)));
-        const bool projecting = (goblin::focus_category() >= 0 || ap_coloring) &&
+        // An active AP lease no longer shows the overlay: the AP pin rings were removed
+        // 2026-09-07, so a connected client alone must not cost us a shown window.
+        const bool projecting = goblin::focus_category() >= 0 &&
                                 goblin::maphover::map_dialog() != nullptr;
         {
             static bool win_shown = false;
@@ -2576,7 +2532,6 @@ void overlay_thread()
             }
             ImGui::GetIO().MouseDrawCursor = true; // our window has no system cursor over the game
             if (projecting) draw_map_highlights();
-            if (ap_coloring) draw_ap_map_colors();
             draw_settings_window();
             draw_preview_window();
             ImGui::Render();
@@ -2591,7 +2546,6 @@ void overlay_thread()
             ImGui::NewFrame();
             ImGui::GetIO().MouseDrawCursor = false;
             if (projecting) draw_map_highlights();
-            if (ap_coloring) draw_ap_map_colors();
             if (projecting && goblin::focus_category() >= 0) draw_focus_banner_onscreen();  // mirror the "showing only" filter text on screen
             if (hovering) draw_hover_tooltip();
             ImGui::Render();
