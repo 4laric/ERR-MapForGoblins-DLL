@@ -56,12 +56,8 @@ namespace goblin
     std::vector<HighlightPoint> focus_highlight_points();
 
 
-    struct APStylePoint { HighlightPoint point; uint8_t style = 0; float scale = 1.0f; };
     // Owner-thread poll/apply: true after a changed filter is successfully applied.
     bool refresh_ap_check_filters();
-    // AP halos for visible markers: progression covers every representation; hints require a unique one.
-    // Empty when the client snapshot is missing, expired, or map injection is inactive.
-    const std::vector<APStylePoint> &ap_style_points();
     // Original (pre-remap) row ids of injected markers whose icon is currently HIDDEN
     // for any reason (collected / kindling / manually hidden / a live disable or cleared
     // flag is set). The region-progress tab counts these as done. Reads the LIVE rows so
@@ -116,6 +112,25 @@ namespace goblin
     // changes a toggle, and from the refresh thread when the collected set
     // changes. Idempotent.
     void apply_category_visibility();
+
+    // ---- Build-time pruning of hidden rows ---------------------------------
+    // Called from the buildMarkers hook (goblin::maphover) around the engine's pin
+    // build, on the game UI thread. prune_hidden_pins_for_build() clears
+    // dispMask00/01/02 on every injected row the user's settings currently hide
+    // (category off, collected, kindling-collected, manually hidden, filtered out by
+    // the AP check filters, or outside an active focus), remembering the baked bits;
+    // restore_pruned_pins() puts them back. The engine reads dispMask ONLY while
+    // building, so a pruned row never becomes a pin or a widget tree - which is where
+    // the map lag came from, since all ~9200 rows are injected whatever the toggles
+    // say. Outside the build window rows read exactly as baked.
+    //
+    // Consequence: a marker going hidden -> SHOWN (enabling a category, clearing a
+    // focus, relaxing an AP filter, unhiding) now appears on the NEXT map open, not
+    // instantly. The reverse (and collection) is still live via the text-enable flags
+    // in apply_category_visibility(). Disable with prune_hidden_pins_at_build = false.
+    // restore_pruned_pins() is idempotent and safe to call with nothing pruned.
+    void prune_hidden_pins_for_build();
+    void restore_pruned_pins();
 
     // ---- Manual per-marker hide (hover + hotkey; overlay-managed) ----------
     // Toggle the hidden state of the marker whose live WorldMapPointParam row is

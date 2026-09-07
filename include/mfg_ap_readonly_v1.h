@@ -96,9 +96,12 @@ typedef uint32_t (__cdecl *MFG_AP_SetLotStylesV1)(uint32_t requested_abi,
  * and a 250..10000 ms lease. Every nonempty entry must have a unique
  * (lot_table, lot_row), table MAP or ENEMY, nonzero row, and style ORANGE or
  * YELLOW. A null pointer with count=0 and lease_ms=0 clears immediately.
- * The implementation stops rendering all styles when the lease expires, when
- * map rows are retired, or when map injection is disabled. A style only
- * decorates an already-visible unambiguous native marker; it never requests a
- * marker reveal or item scouting.
+ * Since 2026-09-07 the engine RENDERS NOTHING for lot styles: the on-map ring
+ * overlay was removed (it obscured the pins it was meant to lift and cost a
+ * shown overlay window whenever a client held a lease). The export, its ABI,
+ * its validation and CAP_LOT_STYLE_OVERLAY_V1 are all retained so existing
+ * clients keep getting MFG_AP_OK instead of an error; the accepted snapshot is
+ * simply never drawn. Filtering (MFG_AP_SET_CHECK_STATES_V1) is unaffected.
+ * A style never requested a marker reveal or item scouting.
  */
 #endif

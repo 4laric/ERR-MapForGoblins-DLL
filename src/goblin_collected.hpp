@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace goblin::collected
 {
@@ -16,6 +17,11 @@ namespace goblin::collected
     int refresh();
 
     bool is_row_collected(uint64_t row_id);
+
+    /// Membership-equivalent snapshot of the collected set (dynamic row ids), taken
+    /// under one lock. For passes that test every injected row; is_row_collected()
+    /// locks and probes a std::set per call.
+    std::unordered_set<uint64_t> collected_snapshot();
 
     /// Same as is_row_collected, but takes the ORIGINAL MAP_ENTRIES row_id and
     /// resolves the post-remap dynamic id internally. Use this from code paths

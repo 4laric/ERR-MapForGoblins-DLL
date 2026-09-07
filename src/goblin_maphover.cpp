@@ -11,6 +11,7 @@
 // that row ptr; the inject layer matches it to one of our CategoryRow::p.
 #include "goblin_maphover.hpp"
 #include "goblin_ap_cache.hpp"
+#include "goblin_inject.hpp"
 
 #include "modutils.hpp"
 
@@ -53,6 +54,12 @@ namespace
         // byte is the area (60=overworld, 12=underground, 61=DLC) - it updates live on layer
         // switch (FUN_1401b9390). We keep the pointer and read it live in map_layer().
         g_dialog_data.store(ctx, std::memory_order_relaxed);
+        // Clear dispMask on every row the user's settings hide, so the engine never
+        // builds a pin for it; put the baked bits back the moment the build returns.
+        // The guard restores on any C++-level early exit too. (An SEH crash inside
+        // o_build would skip it, but the next prune restores before it prunes again.)
+        goblin::prune_hidden_pins_for_build();
+        struct RestoreGuard { ~RestoreGuard() { goblin::restore_pruned_pins(); } } guard;
         return o_build(owner, ctx, a, b);
     }
 

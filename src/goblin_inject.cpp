@@ -189,6 +189,51 @@ static bool row_is_hidden(const CategoryRow &cr)
            row_hidden_by_flag(cr.p);
 }
 
+// ── Per-pass visibility snapshot ────────────────────────────────────────────
+// Everything a whole-table pass needs to decide "is this row hidden by the user's
+// SETTINGS?" (as opposed to by a live game flag), gathered ONCE. Per row the naive
+// path took a mutex + std::set probe in collected::, another set probe in
+// kindling::, and a mutex + FNV hash + std::map probe for the manual-hide set -
+// times ~9200 rows, several times a second. Membership answers are identical.
+struct VisibilitySnapshot
+{
+    std::shared_ptr<const goblin::ap::CheckStateSnapshot> ap_checks;
+    std::unordered_set<uint64_t> collected;
+    std::unordered_set<uint64_t> kindling;
+    std::unordered_set<uint64_t> manual_hidden;  // marker_key() values
+    int focus = -1;
+    int32_t focus_region = -1;
+};
+
+static uint64_t ap_now_ms();
+
+static VisibilitySnapshot take_visibility_snapshot()
+{
+    VisibilitySnapshot s;
+    s.ap_checks = goblin::ap::cache().active_check_states(ap_now_ms());
+    s.collected = goblin::collected::collected_snapshot();
+    s.kindling = goblin::kindling::collected_snapshot();
+    {
+        std::lock_guard<std::mutex> lk(g_manual_hidden_mtx);
+        s.manual_hidden.reserve(g_manual_hidden.size());
+        for (const auto &[key, meta] : g_manual_hidden) s.manual_hidden.insert(key);
+    }
+    s.focus = g_focus_category;
+    s.focus_region = g_focus_region;
+    return s;
+}
+
+static bool snapshot_collected(const VisibilitySnapshot &s, const CategoryRow &cr)
+{
+    return s.collected.count(cr.row_id) != 0 || s.kindling.count(cr.row_id) != 0;
+}
+
+static bool snapshot_manually_hidden(const VisibilitySnapshot &s,
+                                     const from::paramdef::WORLD_MAP_POINT_PARAM_ST *p)
+{
+    return p && s.manual_hidden.count(marker_key(p)) != 0;
+}
+
 // Live-loot: lot-backed injected rows. refresh_loot_from_itemlot() reads the
 // LIVE ItemLotParam getItemFlagId for each and rewrites textDisableFlagId1 so
 // the marker hides on the actual light-point pickup for the loaded regulation
@@ -492,6 +537,25 @@ static bool ap_row_allowed(const goblin::ap::CheckStateSnapshot* snapshot,
         goblin::config::apInLogicOnly);
 }
 
+// Single "should this row's icon be shown, per the user's settings?" predicate.
+// In focus mode only the focused category IN the focused region is eligible (its
+// show_* toggle is ignored); otherwise the per-category toggle applies. Both paths
+// hide collected (pieces/nodes + kindling), manually hidden and AP-filtered rows.
+// Deliberately does NOT consider live hide flags (loot pickup, boss cleared): those
+// are the engine's own per-frame gate and must keep working on the open map.
+// Used by apply_category_visibility() (the live text-enable-flag gate) and by the
+// build-time prune, so the two can never disagree about what is hidden.
+static bool row_shown_by_settings(const CategoryRow &cr, const VisibilitySnapshot &s)
+{
+    const bool eligible =
+        (s.focus >= 0) ? (static_cast<int>(cr.cat) == s.focus && cr.region_id == s.focus_region)
+                       : is_category_enabled(cr.cat);
+    return eligible &&
+           ap_row_allowed(s.ap_checks.get(), cr.check_identity.kind, cr.check_identity.row) &&
+           !snapshot_collected(s, cr) &&
+           !snapshot_manually_hidden(s, cr.p);
+}
+
 static bool apply_ap_visibility_seh();
 
 bool goblin::refresh_ap_check_filters()
@@ -510,17 +574,17 @@ bool goblin::refresh_ap_check_filters()
 
 void goblin::apply_focus_highlight()
 {
-    const auto ap_checks = ap::cache().active_check_states(ap_now_ms());
-    const int focus = g_focus_category;
+    const auto snap = take_visibility_snapshot();
+    const int focus = snap.focus;
     int n_shown = 0, n_forced = 0;
     for (auto &cr : g_category_rows)
     {
         if (!cr.p) continue;
         const bool focused = focus >= 0 && static_cast<int>(cr.cat) == focus &&
-                             cr.region_id == g_focus_region;
-        const bool shown = focused && ap_row_allowed(ap_checks.get(), cr.check_identity.kind, cr.check_identity.row) &&
-                           !collected::is_row_collected(cr.row_id) &&
-                           !kindling::is_row_collected(cr.row_id);
+                             cr.region_id == snap.focus_region;
+        const bool shown = focused &&
+                           ap_row_allowed(snap.ap_checks.get(), cr.check_identity.kind, cr.check_identity.row) &&
+                           !snapshot_collected(snap, cr);
 
         if (shown)
         {
@@ -606,111 +670,6 @@ std::vector<goblin::HighlightPoint> goblin::focus_highlight_points()
     return out;
 }
 
-
-// Only copied positions survive between frames. No game row pointer is cached.
-const std::vector<goblin::APStylePoint>& goblin::ap_style_points()
-{
-    static std::vector<APStylePoint> points;
-    static uint64_t last_refresh = 0, last_generation = 0, last_checks = 0;
-    static unsigned last_options = 0;
-    static int last_focus = -2;
-    static int32_t last_region = -2;
-    static float last_scale = 0;
-    static bool last_rings = false;
-    const auto now = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now().time_since_epoch()).count());
-    const auto snapshot = ap::cache().active_lot_styles(now);
-    const auto checks = ap::cache().active_check_states(now);
-    const auto style_generation = snapshot ? snapshot->generation : 0;
-    const auto check_generation = checks ? checks->generation : 0;
-    const float scale = std::isfinite(config::apProgressionScale)
-        ? std::clamp(config::apProgressionScale, 1.0f, 3.0f) : 1.5f;
-    // ap_progression_rings (default off): the orange progression ring is one of TWO ring sources
-    // here; the other is the client's lot-style lease (yellow hints), which stays. With rings
-    // off the progression bit is masked before the style decision, so a hinted progression check
-    // keeps its yellow ring and an unhinted one draws nothing -- Progression only / F6 still
-    // carry the progression meaning.
-    const bool rings = config::apProgressionRings;
-    if (!g_param_injection_active || (!snapshot && !checks))
-    {
-        points.clear();
-        last_generation = 0;
-        return points;
-    }
-    if (style_generation == last_generation && check_generation == last_checks &&
-        last_options == ap_filter_options() && last_focus == g_focus_category &&
-        last_region == g_focus_region && last_scale == scale && last_rings == rings &&
-        now >= last_refresh && now - last_refresh < 100)
-        return points;
-    last_generation = style_generation;
-    last_checks = check_generation;
-    last_options = ap_filter_options();
-    last_focus = g_focus_category;
-    last_region = g_focus_region;
-    last_scale = scale;
-    last_rings = rings;
-    last_refresh = now;
-    points.clear();
-    // Bounded to ten scans/second while enabled. Cheap lot membership precedes flag reads.
-    std::unordered_map<uint64_t, uint32_t> styles;
-    if (snapshot) for (const auto& entry : snapshot->entries)
-        styles.emplace((static_cast<uint64_t>(entry.lot_table) << 32) | entry.lot_row, entry.style);
-    if (checks && rings) for (const auto& [key, flags] : checks->flags)
-        if (flags & MFG_AP_PROGRESSION) styles.try_emplace(key, MFG_AP_STYLE_ORANGE);
-    std::unordered_map<uint64_t, size_t> multiplicity;
-    for (const auto& cr : g_category_rows)
-    {
-        const uint64_t key = goblin::ap::check_key(cr.check_identity.kind, cr.check_identity.row);
-        if (styles.contains(key)) ++multiplicity[key];
-    }
-    for (const auto& cr : g_category_rows)
-    {
-        const uint64_t key = goblin::ap::check_key(cr.check_identity.kind, cr.check_identity.row);
-        const auto style = styles.find(key);
-        if (style == styles.end() || !cr.p) continue;
-        uint32_t check_flags = 0;
-        if (checks)
-        {
-            const auto state = checks->flags.find(key);
-            if (state != checks->flags.end()) check_flags = state->second;
-        }
-        if (!rings) check_flags &= ~static_cast<uint32_t>(MFG_AP_PROGRESSION);
-        const auto marker_style = ap::check_marker_style(style->second, check_flags, multiplicity[key], checks != nullptr);
-        if (marker_style == MFG_AP_STYLE_NORMAL) continue;
-        const bool eligible = g_focus_category >= 0
-            ? static_cast<int>(cr.cat) == g_focus_category && cr.region_id == g_focus_region
-            : is_category_enabled(cr.cat);
-        if (!ap_row_allowed(checks.get(), cr.check_identity.kind, cr.check_identity.row) ||
-            !eligible || cr.p->disableParam_NT ||
-            (cr.p->eventFlagId && !flag_is_set(cr.p->eventFlagId)) ||
-            row_is_hidden(cr) || row_group2_gate_off(cr.p))
-            continue;
-        unsigned* enabled[8];
-        enable_flag_ptrs(cr.p, enabled);
-        bool blocked = false;
-        for (const auto* flag : enabled)
-            if (*flag && !flag_is_set(*flag)) { blocked = true; break; }
-        if (blocked) continue;
-        // Textless entries dropped by the game must not get a floating ring.
-        if (!cr.p->isEnableNoText && cr.p->textId1 <= 0 && cr.p->textId2 <= 0 &&
-            cr.p->textId3 <= 0 && cr.p->textId4 <= 0 && cr.p->textId5 <= 0 &&
-            cr.p->textId6 <= 0 && cr.p->textId7 <= 0 && cr.p->textId8 <= 0)
-            continue;
-        APStylePoint point{};
-        if (row_marker_info(cr.p, point.point))
-        {
-            point.style = static_cast<uint8_t>(marker_style);
-            if (checks)
-            {
-                const auto state = checks->flags.find(key);
-                if (rings && state != checks->flags.end() && (state->second & MFG_AP_PROGRESSION))
-                    point.scale = scale;
-            }
-            points.push_back(point);
-        }
-    }
-    return points;
-}
 
 std::unordered_set<uint64_t> goblin::hidden_marker_original_ids()
 {
@@ -1466,27 +1425,114 @@ static bool gamepad_combo_held()
 // from the refresh thread when the collected set changes. Idempotent.
 void goblin::apply_category_visibility()
 {
-    const auto ap_checks = ap::cache().active_check_states(ap_now_ms());
-    const int focus = g_focus_category;
+    const auto snap = take_visibility_snapshot();
     for (auto &cr : g_category_rows)
     {
         // In focus mode only the focused category IN the focused region is
         // eligible (ignoring its show_* toggle); otherwise the normal per-category
         // toggle applies. Both paths still hide collected rows, so what remains
         // visible is the uncollected markers of that category in that region.
-        const bool eligible =
-            (focus >= 0) ? (static_cast<int>(cr.cat) == focus && cr.region_id == g_focus_region)
-                         : is_category_enabled(cr.cat);
-        bool show = eligible && ap_row_allowed(ap_checks.get(), cr.check_identity.kind, cr.check_identity.row) &&
-                    !collected::is_row_collected(cr.row_id) &&
-                    !kindling::is_row_collected(cr.row_id) &&
-                    !is_manually_hidden(cr.p);  // user-hidden markers stay hidden
+        const bool show = row_shown_by_settings(cr, snap);
         unsigned *en[8];
         enable_flag_ptrs(cr.p, en);
         for (int k = 0; k < 8; ++k)
             *en[k] = show ? cr.baked_enable[k]
                           : static_cast<unsigned>(goblin::flag::AlwaysOff);
     }
+}
+
+// ---- Build-time pruning of hidden rows -------------------------------------
+// Every one of our ~9200 rows is injected regardless of the show_* toggles, and
+// apply_category_visibility() only makes a hidden row's text lines evaluate to
+// "off" - the engine still BUILDS a pin and a widget tree for it on every map
+// open and still pays per-frame work for it. dispMask00/01/02 are different:
+// the engine reads them only while BUILDING the pin list (buildMarkers), so a
+// row whose masks are clear at build time never becomes a pin at all.
+//
+// So: right before the game builds the pins we clear the masks of every row that
+// the user's settings hide, and restore the baked values the instant the build
+// returns. Outside the build window every row looks exactly as baked, so the
+// progress tab, the layer detection in row_marker_info() and the hover path never
+// see a mutated row.
+//
+// Consequence (documented in docs/AP-CHECK-FILTERS.md): hidden -> SHOWN now needs
+// a map reopen. Shown -> hidden and collection stay instant, because those still
+// run through the live text-enable-flag path above.
+struct PrunedRow
+{
+    from::paramdef::WORLD_MAP_POINT_PARAM_ST *p;
+    unsigned char m0, m1, m2;
+};
+static std::vector<PrunedRow> g_pruned_rows;
+static std::mutex g_prune_mtx;   // guards g_pruned_rows; dispMask is written here ONLY
+
+// Raw row writes go through SEH, like every other live-param write in this file:
+// a retired/unmapped row must never take the game down.
+static bool clear_row_masks_seh(from::paramdef::WORLD_MAP_POINT_PARAM_ST *p,
+                                unsigned char &m0, unsigned char &m1, unsigned char &m2)
+{
+    __try
+    {
+        m0 = p->dispMask00 ? 1 : 0;
+        m1 = p->dispMask01 ? 1 : 0;
+        m2 = p->dispMask02 ? 1 : 0;
+        if (!m0 && !m1 && !m2) return false;   // already invisible - nothing to restore
+        p->dispMask00 = false;
+        p->dispMask01 = false;
+        p->dispMask02 = 0;
+        return true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+
+static void restore_row_masks_seh(const PrunedRow &pr)
+{
+    __try
+    {
+        pr.p->dispMask00 = pr.m0 != 0;
+        pr.p->dispMask01 = pr.m1 != 0;
+        pr.p->dispMask02 = pr.m2;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {}
+}
+
+static void restore_pruned_rows_locked()
+{
+    for (const auto &pr : g_pruned_rows)
+        if (pr.p) restore_row_masks_seh(pr);
+    g_pruned_rows.clear();
+}
+
+void goblin::prune_hidden_pins_for_build()
+{
+    if (!config::pruneHiddenPinsAtBuild || !g_param_injection_active) return;
+    std::lock_guard<std::mutex> lk(g_prune_mtx);
+    // Defensive: if a previous build never reached its restore (a crash inside the
+    // engine, or a nested/duplicated build call), put those masks back first so we
+    // can never bake a cleared mask in as if it were the baked value.
+    restore_pruned_rows_locked();
+    const auto snap = take_visibility_snapshot();
+    size_t total = 0, pruned = 0;
+    g_pruned_rows.reserve(g_category_rows.size());
+    for (auto &cr : g_category_rows)
+    {
+        if (!cr.p) continue;
+        ++total;
+        if (row_shown_by_settings(cr, snap)) continue;
+        PrunedRow pr{cr.p, 0, 0, 0};
+        if (clear_row_masks_seh(cr.p, pr.m0, pr.m1, pr.m2))
+        {
+            g_pruned_rows.push_back(pr);
+            ++pruned;
+        }
+    }
+    spdlog::info("[prune] build: rows={} pruned={} kept={}", total, pruned, total - pruned);
+}
+
+void goblin::restore_pruned_pins()
+{
+    std::lock_guard<std::mutex> lk(g_prune_mtx);
+    restore_pruned_rows_locked();
 }
 
 // ---- Manual per-marker hide: public API ------------------------------------

@@ -36,24 +36,8 @@ static void test_check_presentation()
     assert(!goblin::ap::check_filter_allows(snapshot.get(), 1, godrick.row, true, true, false));
     MFG_AP_LotStyleV1 invalid_style{3, godrick.row, MFG_AP_STYLE_ORANGE};
     assert(bosses.set_lot_styles(1, &invalid_style, 1, 1000, 100) == MFG_AP_BAD_ARGUMENT);
-    using goblin::ap::check_marker_style;
-    // An old orange lease cannot override a newer seed classification.
-    assert(check_marker_style(MFG_AP_STYLE_ORANGE, MFG_AP_CHECK, 1, true) == MFG_AP_STYLE_NORMAL);
-    assert(check_marker_style(MFG_AP_STYLE_ORANGE, 0, 1, true) == MFG_AP_STYLE_NORMAL);
-    assert(check_marker_style(MFG_AP_STYLE_ORANGE, 3, 1, true) == MFG_AP_STYLE_ORANGE);
-    assert(check_marker_style(MFG_AP_STYLE_YELLOW, MFG_AP_CHECK, 1, true) == MFG_AP_STYLE_YELLOW);
-    assert(check_marker_style(MFG_AP_STYLE_ORANGE, 0, 1, false) == MFG_AP_STYLE_ORANGE);
-    assert(check_marker_style(MFG_AP_STYLE_YELLOW, MFG_AP_CHECK, 2) == MFG_AP_STYLE_NORMAL);
-    assert(check_marker_style(MFG_AP_STYLE_ORANGE, 0, 2) == MFG_AP_STYLE_NORMAL);
-    for (size_t representations : {size_t{2}, size_t{12}})
-    {
-        assert(check_marker_style(MFG_AP_STYLE_YELLOW, 3, representations) == MFG_AP_STYLE_ORANGE);
-        assert(check_marker_style(MFG_AP_STYLE_NORMAL, 3, representations) == MFG_AP_STYLE_ORANGE);
-    }
-    assert(check_marker_style(MFG_AP_STYLE_YELLOW, 3, 1) == MFG_AP_STYLE_YELLOW);
-    assert(check_marker_style(MFG_AP_STYLE_NORMAL, 3, 1) == MFG_AP_STYLE_ORANGE);
-    assert(check_marker_style(MFG_AP_STYLE_YELLOW, 2, 12) == MFG_AP_STYLE_NORMAL);
-
+    // (The lot-style ring renderer was removed 2026-09-07; the setter stays a
+    // validated no-op for older clients, so only its validation is exercised here.)
     goblin::ap::CheckFilterRefresh refresh;
     assert(refresh.due(1, 1, 1000));
     refresh.complete(1, 1, 1000, false);

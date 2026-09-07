@@ -1024,6 +1024,15 @@ bool goblin::collected::is_row_collected(uint64_t row_id)
     return g_collected_rows.count(row_id) > 0;
 }
 
+// One lock + one hash build for a whole pass over the ~9200 injected rows, instead
+// of a mutex and an O(log n) std::set probe per row. Callers that test every row
+// (visibility, focus, the build-time prune) use this.
+std::unordered_set<uint64_t> goblin::collected::collected_snapshot()
+{
+    std::lock_guard<std::mutex> lk(g_collected_mutex);
+    return std::unordered_set<uint64_t>(g_collected_rows.begin(), g_collected_rows.end());
+}
+
 bool goblin::collected::is_original_row_collected(uint64_t original_row_id)
 {
     auto it = g_original_to_dynamic.find(original_row_id);
