@@ -18,6 +18,8 @@ namespace goblin::config
     // just the checks the tracker says you can reach now, which is both the useful default
     // and far fewer pins to build.
     bool apChecksOnly = true, apProgressionOnly = false, apInLogicOnly = true;
+    bool apProgressionAura = true;    // key ap_progression_aura: gold ring under pins matched to a
+                                      // progression check (build-time iconId swap, no per-frame cost)
     bool pruneHiddenPinsAtBuild = true;  // key prune_hidden_pins_at_build: strip dispMask on
                                          // settings-hidden rows for the duration of the pin build
     bool fastMapProfile = false;
@@ -145,6 +147,8 @@ namespace
                   "Show only pins matched to progression checks in your connected seed."),
                 B("ap_in_logic_only", apInLogicOnly, "true",
                   "On by default: show only checks the tracker says you can reach now. Uses tracker region access; does not evaluate extra quest/puzzle conditions. Requires Archipelago map integration."),
+                B("ap_progression_aura", apProgressionAura, "true",
+                  "Draw a gold ring under pins matched to a progression check in your connected seed. Applied when the map is built, so a change lands on the next map open. Does not reveal the placed item."),
             }},
 
             {"Equipment", nullptr, false, {

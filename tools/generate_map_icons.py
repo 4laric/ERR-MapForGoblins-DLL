@@ -89,6 +89,36 @@ def icon_matrix(w, h):
     return generate_logo.swf_matrix(sc, sc, -round(w * sc * 10), -round(h * sc * 10))
 
 
+AURA_SIZE = 132   # aura bitmap edge (px). ~1.4x SIZE so the ring clears every icon's tight crop.
+AURA_RGB = (255, 200, 64)   # gold
+
+
+def aura_image(size=AURA_SIZE):
+    """Procedural progression aura: a soft gold ring with a faint filled glow, drawn at 4x and
+    downscaled. Placed UNDER an icon in its aura frame (depth 1, icon at depth 2), so the same
+    icon art gets a native-rendered halo with no per-frame work. Returned PREMULTIPLIED, like
+    normalize() output, so lossless_body() can take it directly."""
+    from PIL import ImageDraw, ImageFilter
+    ss = 4
+    big = size * ss
+    img = Image.new("RGBA", (big, big), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    r, gg, b = AURA_RGB
+    c = big / 2
+    # faint filled glow
+    rad = big * 0.46
+    d.ellipse((c - rad, c - rad, c + rad, c + rad), fill=(r, gg, b, 70))
+    # solid ring
+    ring_w = big * 0.075
+    rad2 = big * 0.44
+    d.ellipse((c - rad2, c - rad2, c + rad2, c + rad2), outline=(r, gg, b, 235), width=round(ring_w))
+    img = img.filter(ImageFilter.GaussianBlur(ss * 0.6))
+    img = img.resize((size, size), Image.LANCZOS)
+    rr, g2, bb, al = img.split()
+    return Image.merge("RGBA", (ImageChops.multiply(rr, al), ImageChops.multiply(g2, al),
+                                ImageChops.multiply(bb, al), al))
+
+
 def lossless_body(img):
     """DefineBitsLossless2 body (charId placeholder 0) from an ALREADY-normalized (premultiplied, cropped)
     RGBA image - do NOT normalize or premultiply again here."""
@@ -131,6 +161,11 @@ def main():
         entries.append((icon, body, mat))
         print(f"  iconId {icon:4} -> {norm.width:2}x{norm.height:2}px, tag {len(body)} bytes")
 
+    aura = aura_image()
+    aura_body = lossless_body(aura)
+    aura_mat = icon_matrix(aura.width, aura.height)
+    print(f"  aura      -> {aura.width}x{aura.height}px, tag {len(aura_body)} bytes")
+
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     hpp = OUT_DIR / "goblin_map_icons.hpp"
     cpp = OUT_DIR / "goblin_map_icons.cpp"
@@ -153,6 +188,13 @@ def main():
         "const unsigned char *matrix; unsigned matrixLen; };\n"
         "    extern const MapIconTag MAP_ICON_TAGS[];\n"
         "    extern const int MAP_ICON_TAG_COUNT;\n"
+        "    // Progression aura: one extra bitmap (a gold ring) the DLL places UNDER an icon in a second,\n"
+        "    // per-icon aura frame. Markers matched to an AP progression check are pointed at that frame\n"
+        "    // for the duration of the pin build (goblin_inject prune pass). Native render, zero per-frame cost.\n"
+        "    extern const unsigned char MAP_AURA_TAG[];\n"
+        "    extern const unsigned MAP_AURA_TAG_LEN;\n"
+        "    extern const unsigned char MAP_AURA_MATRIX[];\n"
+        "    extern const unsigned MAP_AURA_MATRIX_LEN;\n"
         "}\n", encoding="utf-8")
 
     out = ['#include "goblin_map_icons.hpp"\n', "namespace goblin::generated\n{\n"]
@@ -164,6 +206,10 @@ def main():
         out.append(f"        {{{icon}, TAG_{icon}, {len(body)}u, MAT_{icon}, {len(mat)}u}},\n")
     out.append("    };\n")
     out.append(f"    const int MAP_ICON_TAG_COUNT = {len(entries)};\n")
+    out.append(f"    const unsigned char MAP_AURA_TAG[] = {{{','.join(str(b) for b in aura_body)}}};\n")
+    out.append(f"    const unsigned MAP_AURA_TAG_LEN = {len(aura_body)}u;\n")
+    out.append(f"    const unsigned char MAP_AURA_MATRIX[] = {{{','.join(str(b) for b in aura_mat)}}};\n")
+    out.append(f"    const unsigned MAP_AURA_MATRIX_LEN = {len(aura_mat)}u;\n")
     out.append("}\n")
     cpp.write_text("".join(out), encoding="utf-8")
     print(f"[map-icons] wrote {len(entries)} icons -> {cpp.name} ({cpp.stat().st_size} bytes)")

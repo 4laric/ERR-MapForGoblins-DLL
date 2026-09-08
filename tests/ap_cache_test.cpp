@@ -15,6 +15,28 @@ extern "C" uint32_t __cdecl MFG_AP_SET_LOT_STYLES_V1(
 extern "C" uint32_t __cdecl MFG_AP_SET_CHECK_STATES_V1(
     uint32_t, const MFG_AP_CheckStateV1*, uint32_t, uint32_t);
 
+static void test_check_is_progression()
+{
+    using goblin::ap::check_is_progression;
+    goblin::ap::CheckStateSnapshot snap;
+    snap.generation = 1;
+    snap.flags[goblin::ap::check_key(1, 100)] = MFG_AP_CHECK | MFG_AP_PROGRESSION;                 // prog, not reachable
+    snap.flags[goblin::ap::check_key(1, 101)] = MFG_AP_CHECK | MFG_AP_IN_LOGIC;                    // reachable, not prog
+    snap.flags[goblin::ap::check_key(1, 102)] = MFG_AP_CHECK | MFG_AP_PROGRESSION | MFG_AP_IN_LOGIC; // both, but NOT the same check
+    snap.flags[goblin::ap::check_key(1, 103)] = MFG_AP_CHECK | MFG_AP_PROGRESSION | MFG_AP_IN_LOGIC | MFG_AP_PROGRESSION_IN_LOGIC;
+    snap.flags[goblin::ap::check_key(3, 104)] = MFG_AP_PROGRESSION | MFG_AP_PROGRESSION_IN_LOGIC;  // no CHECK bit
+    assert(!check_is_progression(nullptr, 1, 100, false));
+    assert(check_is_progression(&snap, 1, 100, false));
+    assert(!check_is_progression(&snap, 1, 100, true));
+    assert(!check_is_progression(&snap, 1, 101, false));
+    assert(!check_is_progression(&snap, 1, 101, true));
+    assert(check_is_progression(&snap, 1, 102, false));
+    assert(!check_is_progression(&snap, 1, 102, true));   // bit 8 is never rebuilt from 2|4
+    assert(check_is_progression(&snap, 1, 103, true));
+    assert(!check_is_progression(&snap, 3, 104, false));
+    assert(!check_is_progression(&snap, 1, 999, false));
+}
+
 static void test_check_presentation()
 {
     using goblin::ap::marker_check_identity;
@@ -139,6 +161,7 @@ static void test_check_states()
 
 int main()
 {
+    test_check_is_progression();
     test_check_presentation();
     test_check_states();
     static_assert(sizeof(MFG_AP_InfoV1) == 16);

@@ -1,7 +1,35 @@
-# Showing progression checks without per-frame cost (design)
+# Progression aura: showing progression checks without per-frame cost
 
-Status: proposal, 2026-09-08. Replaces the removed ring overlay
-(`docs/AP-PIN-COLORS.md`). Nothing here is implemented yet.
+Status: implemented 2026-09-08 (`ap_progression_aura`, default on). Replaces the
+removed ring overlay (`docs/AP-PIN-COLORS.md`).
+
+## What ships
+
+Every pin stays on the map exactly as the filters leave it. A pin matched to a
+progression check additionally sits on a gold ring, drawn by the engine as
+part of the pin's own icon frame. There is no overlay, no per-frame work, and
+no game-flag read:
+
+- `tools/generate_map_icons.py` emits one extra bitmap, a procedural gold ring
+  (`MAP_AURA_TAG`), alongside the icon bitmaps.
+- At worldmap load `goblin_gfx_probe` appends, for every injected icon, a
+  second "aura twin" frame: RemoveObject2(1) + RemoveObject2(2) + place ring
+  at depth 1 + place icon at depth 2. `injected_aura_iconid(iconId)` maps a
+  marker's current injected frame to its twin in O(1).
+- Inside the `buildMarkers` window, the same pass that prunes hidden rows
+  swaps the `iconId` of each shown progression row to its twin, and the
+  existing scope guard restores it when the build returns. Nothing outside the
+  build ever sees the mutated row.
+- Which rows count as progression: with `ap_in_logic_only` on, the wire bit
+  `MFG_AP_PROGRESSION_IN_LOGIC`; with it off, `MFG_AP_PROGRESSION`. The DLL
+  never rebuilds bit 8 from bits 2 and 4 (`check_is_progression`, unit
+  tested in `tests/ap_cache_test.cpp`).
+- The `[prune]` log line reports `prog=N` (rows swapped) and
+  `prog_no_twin=N` (progression rows whose icon has no twin: vanilla icons
+  1-348, or the aura bitmap failed to register this load).
+- Like every build-time change, a new snapshot lands on the next map open.
+
+Below is the original design note, kept for the reasoning.
 
 ## What was actually expensive
 

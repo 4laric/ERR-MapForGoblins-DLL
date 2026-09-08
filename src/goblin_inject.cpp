@@ -1464,7 +1464,32 @@ struct PrunedRow
     unsigned char m0, m1, m2;
 };
 static std::vector<PrunedRow> g_pruned_rows;
-static std::mutex g_prune_mtx;   // guards g_pruned_rows; dispMask is written here ONLY
+// Rows whose iconId was swapped to its progression-aura twin for the duration of the build.
+struct AuraRow
+{
+    from::paramdef::WORLD_MAP_POINT_PARAM_ST *p;
+    decltype(from::paramdef::WORLD_MAP_POINT_PARAM_ST::iconId) icon;  // iconId before the swap
+};
+static std::vector<AuraRow> g_aura_rows;
+static std::mutex g_prune_mtx;   // guards g_pruned_rows + g_aura_rows; dispMask is written here ONLY
+
+static bool swap_row_icon_seh(from::paramdef::WORLD_MAP_POINT_PARAM_ST *p, uint32_t aura,
+                              decltype(from::paramdef::WORLD_MAP_POINT_PARAM_ST::iconId) &before)
+{
+    __try
+    {
+        before = p->iconId;
+        p->iconId = static_cast<decltype(p->iconId)>(aura);
+        return true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+
+static void restore_row_icon_seh(const AuraRow &ar)
+{
+    __try { ar.p->iconId = ar.icon; }
+    __except (EXCEPTION_EXECUTE_HANDLER) {}
+}
 
 // Raw row writes go through SEH, like every other live-param write in this file:
 // a retired/unmapped row must never take the game down.
@@ -1501,24 +1526,49 @@ static void restore_pruned_rows_locked()
     for (const auto &pr : g_pruned_rows)
         if (pr.p) restore_row_masks_seh(pr);
     g_pruned_rows.clear();
+    for (const auto &ar : g_aura_rows)
+        if (ar.p) restore_row_icon_seh(ar);
+    g_aura_rows.clear();
 }
 
 void goblin::prune_hidden_pins_for_build()
 {
-    if (!config::pruneHiddenPinsAtBuild || !g_param_injection_active) return;
+    const bool prune = config::pruneHiddenPinsAtBuild;
+    const bool aura = config::apProgressionAura;
+    if ((!prune && !aura) || !g_param_injection_active) return;
     std::lock_guard<std::mutex> lk(g_prune_mtx);
     // Defensive: if a previous build never reached its restore (a crash inside the
     // engine, or a nested/duplicated build call), put those masks back first so we
     // can never bake a cleared mask in as if it were the baked value.
     restore_pruned_rows_locked();
     const auto snap = take_visibility_snapshot();
-    size_t total = 0, pruned = 0;
-    g_pruned_rows.reserve(g_category_rows.size());
+    size_t total = 0, pruned = 0, prog = 0, prog_no_twin = 0;
+    if (prune) g_pruned_rows.reserve(g_category_rows.size());
     for (auto &cr : g_category_rows)
     {
         if (!cr.p) continue;
         ++total;
-        if (row_shown_by_settings(cr, snap)) continue;
+        if (row_shown_by_settings(cr, snap))
+        {
+            // Progression aura: the shown pin's iconId becomes its aura twin (same icon over a gold
+            // ring) until the build returns. One hash probe per shown row, no live flag reads; the
+            // snapshot already carries reachability and progression from the client. Engine draws it.
+            if (aura && cr.check_identity.kind &&
+                goblin::ap::check_is_progression(snap.ap_checks.get(), cr.check_identity.kind,
+                                                 cr.check_identity.row, config::apInLogicOnly))
+            {
+                const uint32_t twin = goblin::gfx_probe::injected_aura_iconid(static_cast<uint32_t>(cr.p->iconId));
+                if (!twin) { ++prog_no_twin; continue; }   // vanilla icon or aura not injected this load
+                AuraRow ar{cr.p, 0};
+                if (swap_row_icon_seh(cr.p, twin, ar.icon))
+                {
+                    g_aura_rows.push_back(ar);
+                    ++prog;
+                }
+            }
+            continue;
+        }
+        if (!prune) continue;
         PrunedRow pr{cr.p, 0, 0, 0};
         if (clear_row_masks_seh(cr.p, pr.m0, pr.m1, pr.m2))
         {
@@ -1526,7 +1576,8 @@ void goblin::prune_hidden_pins_for_build()
             ++pruned;
         }
     }
-    spdlog::info("[prune] build: rows={} pruned={} kept={}", total, pruned, total - pruned);
+    spdlog::info("[prune] build: rows={} pruned={} kept={} prog={} prog_no_twin={}", total, pruned,
+                 total - pruned, prog, prog_no_twin);
 }
 
 void goblin::restore_pruned_pins()

@@ -21,6 +21,10 @@ when several checks share a lot. Unmapped pins are hidden in checks-only mode;
 they are not thereby classified as definitively non-checks. The mapping currently
 covers 3,847 of the full catalog's 4,925 checks before seed options narrow it.
 
+**Progression aura** (`ap_progression_aura`, default on): pins matched to a
+progression check sit on a gold ring baked into their icon frame at map build
+time. Zero per-frame cost; see `docs/AP-PROGRESSION-PINS-DESIGN.md`.
+
 Pin colouring (the orange progression / yellow hint rings and the
 `ap_progression_scale` halo) was removed on 2026-09-07 - see
 `docs/AP-PIN-COLORS.md`. Progression is surfaced by **Progression surface only**
