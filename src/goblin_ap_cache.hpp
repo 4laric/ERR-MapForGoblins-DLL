@@ -54,6 +54,19 @@ inline CheckIdentity marker_check_identity(uint32_t table, uint32_t row,
     return {0, 0};
 }
 
+// Is this check part of the seed's progression surface, for emphasis on a pin that is already
+// shown? With the in-logic filter on, the visible pins are the reachable ones, and the per-check
+// conjunction bit is the truthful answer for lots shared by several checks (the client computes it;
+// never rebuild it from bits 2|4 here). With the filter off, the plain progression bit applies.
+inline bool check_is_progression(const CheckStateSnapshot* snapshot, uint32_t table, uint32_t row,
+                                 bool in_logic_only)
+{
+    if (!snapshot) return false;
+    const auto it = snapshot->flags.find(check_key(table, row));
+    if (it == snapshot->flags.end() || !(it->second & MFG_AP_CHECK)) return false;
+    return (it->second & (in_logic_only ? MFG_AP_PROGRESSION_IN_LOGIC : MFG_AP_PROGRESSION)) != 0;
+}
+
 // A snapshot is an additional visibility restriction, never a reveal request.
 inline bool check_filter_allows(const CheckStateSnapshot* snapshot, uint32_t table,
                                 uint32_t row, bool checks_only, bool progression_only,

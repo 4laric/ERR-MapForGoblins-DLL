@@ -21,6 +21,10 @@ the map, which is the same information the orange rings were approximating, and
 those pins are now pruned at map-build time instead of merely dimmed.
 Progression is still surfaced by `ap_progression_only` and by the F6 tracker.
 
+Since 2026-09-08 progression is shown again, differently: a gold ring baked into
+the pin's own icon frame at build time (`ap_progression_aura`), which costs
+nothing per frame. See `docs/AP-PROGRESSION-PINS-DESIGN.md`.
+
 ## The client-facing API is unchanged
 
 `MFG_AP_SET_LOT_STYLES_V1` and capability bit `MFG_AP_CAP_LOT_STYLE_OVERLAY_V1`
