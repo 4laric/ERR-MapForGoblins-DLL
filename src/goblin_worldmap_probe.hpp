@@ -15,7 +15,10 @@ namespace goblin::worldmap_probe
 
     // Fold (area, grid, area-local pos) -> map-space (u,v) via the captured converter.
     // Returns false if the view-model has not been captured yet (the world map has not
-    // been opened this session) or the point is not placeable on any map layer.
+    // been opened this session), if the captured view-model has gone stale (the engine
+    // stopped driving the converter, i.e. the map data is being torn down - the VM is the
+    // engine's and must not be touched once it can have been freed), or if the point is
+    // not placeable on any map layer.
     bool project(uint8_t area, uint16_t gx, uint16_t gz, float px, float pz,
                  float &map_u, float &map_v);
 }
