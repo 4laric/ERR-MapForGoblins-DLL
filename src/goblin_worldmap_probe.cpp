@@ -24,6 +24,22 @@ namespace
     std::atomic<void *> g_vm{nullptr};
     std::atomic<uint64_t> g_last_ms{0};
 
+    // How long a captured WorldMapViewModel stays usable after the engine last drove the
+    // converter itself. We do NOT own the VM: the engine frees it (and the per-map
+    // converter array it walks) when the map data is torn down - a warp off the map
+    // screen, a region transition, a return to title. The dialog object outlives that
+    // teardown by a few hundred ms, so "the map dialog is still resolvable" is NOT proof
+    // the VM is alive, and re-invoking the converter through a dangling VM faulted inside
+    // the engine (null per-map converter entry) on the overlay thread.
+    //
+    // The engine re-runs this converter continuously while the map is up (it is what
+    // places every pin, and re-places them on pan/zoom/layer changes), so its calls are a
+    // reliable liveness heartbeat: if it has gone quiet, the map data is being or has
+    // been torn down and the pointer must not be touched again. The window only has to be
+    // shorter than the teardown-to-fault gap (~0.5 s in the observed crashes) while
+    // staying well above the engine's own re-convert interval.
+    constexpr uint64_t VM_STALE_MS = 500;
+
     char convert_detour(void *vm, Vec2 *out, uint32_t *packed, Vec3 *world_local)
     {
         g_vm.store(vm, std::memory_order_relaxed);
@@ -68,6 +84,18 @@ bool goblin::worldmap_probe::project(uint8_t area, uint16_t gx, uint16_t gz, flo
 {
     void *vm = g_vm.load(std::memory_order_relaxed);
     if (!vm || !o_convert) return false;  // VM captured on first map open; overlay only calls while open
+
+    // Lifetime guard: the VM belongs to the engine and is freed with the map data. Only
+    // re-invoke it while the engine is still driving the converter itself (see
+    // VM_STALE_MS). Drop the pointer once it goes stale so we never keep a dangling VM
+    // across a teardown - the next engine call re-captures a live one.
+    const uint64_t last = g_last_ms.load(std::memory_order_relaxed);
+    if (GetTickCount64() - last > VM_STALE_MS)
+    {
+        g_vm.store(nullptr, std::memory_order_relaxed);
+        return false;
+    }
+
     const uint32_t packed = (static_cast<uint32_t>(area) << 24) |
                             ((static_cast<uint32_t>(gx) & 0xFF) << 16) |
                             ((static_cast<uint32_t>(gz) & 0xFF) << 8);
