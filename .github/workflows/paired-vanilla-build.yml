@@ -1,0 +1,139 @@
+# Paired vanilla build -- the artifact er-archipelago pins.
+#
+# WHY. `ap-bridge.yml`'s `windows-compile-only` job proves the tree compiles, against the public
+# ERR tables, and deliberately publishes nothing. The AP world repo (er-archipelago) therefore has
+# to rebuild this fork itself inside its own release workflow: it clones the commit named by
+# `release/MFG-VERSION.json`, fetches the private vanilla inputs, runs CMake, runs
+# `tools/make_ap_ini.py` and records provenance. This workflow does that same build HERE, on every
+# push to master and on every `v*` tag, so a paired, hash-described artifact exists per commit
+# instead of only at world-release time.
+#
+# WHAT IT NEEDS. `ICON_REPO_TOKEN`: a token that can read releases on the private inputs repository
+# named by MFG_INPUT_REPO below (the world repo's `er-release.yaml` uses a secret of the same name
+# for the same download). Without it the generated vanilla tables cannot be fetched and the job
+# fails loudly at the first step rather than silently building the wrong profile.
+#
+# WHAT IT PRODUCES. One artifact directory, `mfg-vanilla-<short sha>`:
+#   MapForGoblins.dll  MapForGoblins.ini  LICENSE.txt  MFG-PROVENANCE.json
+# Exactly what er-archipelago's `tools/package_mfg.py` validates and stages.
+#
+# NO PDB, deliberately. The Release config carries no `/Zi` and the link no `/DEBUG`, so this
+# recipe emits no symbol file -- and it must not start emitting one here: CMakeLists.txt builds
+# the DLL with `/Brepro` precisely so the same commit + same data yields byte-identical bytes (a
+# stable AV verdict, and byte-identity with the rebuild er-archipelago's release job does). Adding
+# debug info to get a PDB would change the shipped DLL; building a second RelWithDebInfo pass would
+# ship a PDB that does not describe the shipped DLL. Either is worse than none. If symbols become
+# necessary, change the shipped recipe in CMakeLists.txt so BOTH builds move together.
+name: Paired vanilla build
+
+on:
+  push:
+    branches: [master]
+    tags: ["v*"]
+  workflow_dispatch:
+
+concurrency:
+  group: paired-vanilla-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+env:
+  PYTHONUTF8: "1"
+  # The pinned private generated-data bundle. Keep in step with er-archipelago's
+  # release/MFG-VERSION.json `input_release` / `input_sha256`; the hash is verified before use.
+  MFG_INPUT_REPO: 4laric/er-ap-icon-private
+  MFG_INPUT_TAG: mfg-vanilla-transfer-20260905
+  MFG_INPUT_ASSET: mfg-vanilla-inputs-20260905.zip
+  MFG_INPUT_SHA256: 0a7b8fa931609fe0d778b356fff5259e150d667a0ee2c8daeed38c4285fddc39
+
+jobs:
+  vanilla-dll:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: The inputs token is present
+        shell: bash
+        env:
+          TOKEN: ${{ secrets.ICON_REPO_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "::error::ICON_REPO_TOKEN is not set. It needs read access to releases on ${MFG_INPUT_REPO}; see the header of this file."
+            exit 1
+          fi
+
+      - name: Fetch and verify the pinned vanilla inputs
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.ICON_REPO_TOKEN }}
+        run: |
+          gh release download $env:MFG_INPUT_TAG --repo $env:MFG_INPUT_REPO --pattern $env:MFG_INPUT_ASSET --dir .mfg-inputs
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $archive = Join-Path .mfg-inputs $env:MFG_INPUT_ASSET
+          $hash = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($hash -ne $env:MFG_INPUT_SHA256) {
+            throw "Pinned MFG vanilla input archive hash mismatch: got $hash, expected $($env:MFG_INPUT_SHA256)"
+          }
+          Expand-Archive -LiteralPath $archive -DestinationPath .mfg-inputs/verified
+          Copy-Item .mfg-inputs/verified/src/generated_vanilla src/generated_vanilla -Recurse
+
+      - name: Build the vanilla map engine
+        shell: pwsh
+        run: |
+          python -m pip install pillow==12.3.0 cmake==3.31.6
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          foreach ($generator in @("generate_logo", "generate_map_icons", "generate_overlay_icons", "generate_i18n")) {
+            python "tools/$generator.py"
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          }
+          cmake -S . -B builds/release -G "Visual Studio 17 2022" -A x64 -DGENERATED_SUBDIR=generated_vanilla
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          cmake --build builds/release --config Release --parallel 2
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+      - name: Stage the AP preset and record provenance
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory mfg-artifact | Out-Null
+          Copy-Item builds/release/Release/MapForGoblins.dll mfg-artifact/
+          Copy-Item LICENSE.txt mfg-artifact/
+          builds/release/Release/mfg_inigen.exe mfg-artifact/stock.ini --vanilla
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          python tools/make_ap_ini.py mfg-artifact/stock.ini mfg-artifact/MapForGoblins.ini
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Remove-Item -LiteralPath mfg-artifact/stock.ini
+          python tools/make_mfg_provenance.py mfg-artifact --source-commit $env:GITHUB_SHA --input-sha256 $env:MFG_INPUT_SHA256
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+      - name: Name the artifact after the built commit
+        id: name
+        shell: bash
+        run: echo "artifact=mfg-vanilla-${GITHUB_SHA:0:12}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.name.outputs.artifact }}
+          path: mfg-artifact/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish the tag's release assets
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" \
+            --title "${GITHUB_REF_NAME}" --notes "Paired vanilla build of ${GITHUB_SHA}. See MFG-PROVENANCE.json for the artifact hashes." \
+            || echo "release ${GITHUB_REF_NAME} already exists; uploading assets into it"
+          gh release upload "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --clobber \
+            mfg-artifact/MapForGoblins.dll \
+            mfg-artifact/MapForGoblins.ini \
+            mfg-artifact/LICENSE.txt \
+            mfg-artifact/MFG-PROVENANCE.json
