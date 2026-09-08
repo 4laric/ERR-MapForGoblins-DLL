@@ -90,10 +90,11 @@ def icon_matrix(w, h):
 
 
 AURA_SIZE = 132   # aura bitmap edge (px). ~1.4x SIZE so the ring clears every icon's tight crop.
-AURA_RGB = (255, 200, 64)   # gold
+AURA_RGB = (255, 200, 64)   # gold: progression
+HINT_RGB = (96, 196, 255)   # sky blue: hinted (a hint wins over progression on the same pin)
 
 
-def aura_image(size=AURA_SIZE):
+def aura_image(size=AURA_SIZE, rgb=AURA_RGB):
     """Procedural progression aura: a soft gold ring with a faint filled glow, drawn at 4x and
     downscaled. Placed UNDER an icon in its aura frame (depth 1, icon at depth 2), so the same
     icon art gets a native-rendered halo with no per-frame work. Returned PREMULTIPLIED, like
@@ -103,7 +104,7 @@ def aura_image(size=AURA_SIZE):
     big = size * ss
     img = Image.new("RGBA", (big, big), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
-    r, gg, b = AURA_RGB
+    r, gg, b = rgb
     c = big / 2
     # faint filled glow
     rad = big * 0.46
@@ -165,6 +166,10 @@ def main():
     aura_body = lossless_body(aura)
     aura_mat = icon_matrix(aura.width, aura.height)
     print(f"  aura      -> {aura.width}x{aura.height}px, tag {len(aura_body)} bytes")
+    hint = aura_image(rgb=HINT_RGB)
+    hint_body = lossless_body(hint)
+    hint_mat = icon_matrix(hint.width, hint.height)
+    print(f"  hint aura -> {hint.width}x{hint.height}px, tag {len(hint_body)} bytes")
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     hpp = OUT_DIR / "goblin_map_icons.hpp"
@@ -195,6 +200,12 @@ def main():
         "    extern const unsigned MAP_AURA_TAG_LEN;\n"
         "    extern const unsigned char MAP_AURA_MATRIX[];\n"
         "    extern const unsigned MAP_AURA_MATRIX_LEN;\n"
+        "    // Hint aura: same idea in a second colour, for pins the client leases as hinted\n"
+        "    // (MFG_AP_STYLE_YELLOW). A hint wins over progression on the same pin.\n"
+        "    extern const unsigned char MAP_HINT_TAG[];\n"
+        "    extern const unsigned MAP_HINT_TAG_LEN;\n"
+        "    extern const unsigned char MAP_HINT_MATRIX[];\n"
+        "    extern const unsigned MAP_HINT_MATRIX_LEN;\n"
         "}\n", encoding="utf-8")
 
     out = ['#include "goblin_map_icons.hpp"\n', "namespace goblin::generated\n{\n"]
@@ -210,6 +221,10 @@ def main():
     out.append(f"    const unsigned MAP_AURA_TAG_LEN = {len(aura_body)}u;\n")
     out.append(f"    const unsigned char MAP_AURA_MATRIX[] = {{{','.join(str(b) for b in aura_mat)}}};\n")
     out.append(f"    const unsigned MAP_AURA_MATRIX_LEN = {len(aura_mat)}u;\n")
+    out.append(f"    const unsigned char MAP_HINT_TAG[] = {{{','.join(str(b) for b in hint_body)}}};\n")
+    out.append(f"    const unsigned MAP_HINT_TAG_LEN = {len(hint_body)}u;\n")
+    out.append(f"    const unsigned char MAP_HINT_MATRIX[] = {{{','.join(str(b) for b in hint_mat)}}};\n")
+    out.append(f"    const unsigned MAP_HINT_MATRIX_LEN = {len(hint_mat)}u;\n")
     out.append("}\n")
     cpp.write_text("".join(out), encoding="utf-8")
     print(f"[map-icons] wrote {len(entries)} icons -> {cpp.name} ({cpp.stat().st_size} bytes)")

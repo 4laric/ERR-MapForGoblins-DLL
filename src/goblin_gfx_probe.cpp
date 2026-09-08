@@ -71,6 +71,7 @@ namespace
     SpriteLoaderFn *o_spriteloader = nullptr;
     std::atomic<bool> g_qmark_injected{false}; // frames appended (per worldmap load)
     std::atomic<bool> g_aura_registered{false}; // aura bitmap registered this worldmap load
+    std::atomic<bool> g_hint_registered{false}; // hint bitmap registered this worldmap load
     std::atomic<bool> g_img_registered{false}; // our bitmaps registered (at native-13507 load)
 
     // srcIconId (the gfx iconId a category's markers are baked with) -> our injected iconId. Filled at
@@ -84,6 +85,8 @@ namespace
     constexpr uint32_t FRAME_MAP_SIZE = 8192; // append_icon_frame refuses frame counts above this
     uint32_t g_aura_iid[ICON_MAP_SIZE] = {0};
     uint32_t g_aura_of_frame[FRAME_MAP_SIZE] = {0};
+    uint32_t g_hint_iid[ICON_MAP_SIZE] = {0};      // hint twin (blue ring), same layout
+    uint32_t g_hint_of_frame[FRAME_MAP_SIZE] = {0};
 
     void inject_all_icons(uint64_t ctx);      // defined below; called from lossless_detour (13507 moment)
     bool inject_logo_into_plaque(uint64_t sd); // defined below; called from spriteloader_detour (sprite 246)
@@ -205,9 +208,10 @@ namespace
     std::atomic<uint32_t> g_logo_charid{0};
     std::atomic<bool> g_logo_placed{false};
     std::atomic<uint64_t> g_worldmap_ctx{0}; // the worldmap movie's load ctx (captured at its 13507)
-    // charId layout above the live base: [icons 0..COUNT-1][aura][logo].
+    // charId layout above the live base: [icons 0..COUNT-1][aura][hint][logo].
     uint32_t aura_charid() { return inject_base() + (uint32_t)goblin::generated::MAP_ICON_TAG_COUNT; }
-    uint32_t logo_charid() { return inject_base() + (uint32_t)goblin::generated::MAP_ICON_TAG_COUNT + 1; }
+    uint32_t hint_charid() { return inject_base() + (uint32_t)goblin::generated::MAP_ICON_TAG_COUNT + 1; }
+    uint32_t logo_charid() { return inject_base() + (uint32_t)goblin::generated::MAP_ICON_TAG_COUNT + 2; }
 
     void *registrar_detour(void *rcx, void *rdx, void *r8, void *r9)
     {
@@ -513,6 +517,12 @@ namespace
         else
             spdlog::warn("[icons] aura bitmap registration FAILED (charId {}); progression aura off this load.",
                          aura_charid());
+        if (inject_lossless_tag(ctx, goblin::generated::MAP_HINT_TAG, goblin::generated::MAP_HINT_TAG_LEN,
+                                (uint16_t)hint_charid()))
+            g_hint_registered.store(true, std::memory_order_relaxed);
+        else
+            spdlog::warn("[icons] hint bitmap registration FAILED (charId {}); hint aura off this load.",
+                         hint_charid());
 
         // Register the MapForGoblins logo bitmap right after the icons (same fresh-manager moment).
         uint32_t lcid = logo_charid();
@@ -538,7 +548,7 @@ namespace
             // Compute the charId base self-healingly (high floor, raised above any live charId, window
             // verified clear). Register our bitmaps (image manager is warm from the worldmap's external
             // images), then append a frame per icon and remap markers to the injected iconIds.
-            uint32_t base = compute_safe_base(ctx, (uint32_t)goblin::generated::MAP_ICON_TAG_COUNT + 2); // + aura + logo
+            uint32_t base = compute_safe_base(ctx, (uint32_t)goblin::generated::MAP_ICON_TAG_COUNT + 3); // + aura + hint + logo
             g_inject_base.store(base, std::memory_order_relaxed);
             g_worldmap_ctx.store(ctx, std::memory_order_relaxed); // scope sprite-246 logo to THIS movie
             uint64_t sub = rq(ctx + 0x18);
@@ -549,10 +559,11 @@ namespace
             inject_all_icons(ctx); // registers all icon bitmaps + the logo bitmap
             spdlog::info("[icons] worldmap sprite-171 (frameCount={}) loading; appending {} icon frames.",
                          fcnt, goblin::generated::MAP_ICON_TAG_COUNT);
-            for (int k = 0; k < ICON_MAP_SIZE; ++k) { g_icon_iid[k] = 0; g_aura_iid[k] = 0; }
-            for (uint32_t k = 0; k < FRAME_MAP_SIZE; ++k) g_aura_of_frame[k] = 0;
-            int placed = 0, auras = 0;
+            for (int k = 0; k < ICON_MAP_SIZE; ++k) { g_icon_iid[k] = 0; g_aura_iid[k] = 0; g_hint_iid[k] = 0; }
+            for (uint32_t k = 0; k < FRAME_MAP_SIZE; ++k) { g_aura_of_frame[k] = 0; g_hint_of_frame[k] = 0; }
+            int placed = 0, auras = 0, hints = 0;
             const bool want_aura = g_aura_registered.load(std::memory_order_relaxed);
+            const bool want_hint = g_hint_registered.load(std::memory_order_relaxed);
             uint32_t iid_lo = 0, iid_hi = 0;
             for (int i = 0; i < goblin::generated::MAP_ICON_TAG_COUNT; ++i)
             {
@@ -580,6 +591,20 @@ namespace
                             ++auras;
                         }
                     }
+                    if (want_hint)
+                    {
+                        uint32_t hid = append_icon_frame(sd, (uint16_t)(inject_base() + i), e.matrix, e.matrixLen,
+                                                         (uint16_t)hint_charid(),
+                                                         goblin::generated::MAP_HINT_MATRIX,
+                                                         goblin::generated::MAP_HINT_MATRIX_LEN);
+                        if (hid)
+                        {
+                            g_hint_iid[e.srcIconId] = hid;
+                            if (iid < FRAME_MAP_SIZE) g_hint_of_frame[iid] = hid;
+                            if (hid > iid_hi) iid_hi = hid;
+                            ++hints;
+                        }
+                    }
                 }
             }
             g_iid_lo.store(iid_lo, std::memory_order_relaxed);
@@ -601,7 +626,8 @@ namespace
 #ifdef MFG_DUMP_FRAMES
             dump_frames(sd); // DEV-only (compile-time gated): live tag layout of key frames
 #endif
-            spdlog::info("[icons] appended {} frames (+{} aura twins); remapping markers.", placed, auras);
+            spdlog::info("[icons] appended {} frames (+{} aura, +{} hint twins); remapping markers.",
+                         placed, auras, hints);
             goblin::diag::set_sprite171(true, base, placed, goblin::generated::MAP_ICON_TAG_COUNT, "");
             goblin::diag::set_heap_sample(sd); // live worldmap sprite ptr -> shows the game heap region
             goblin::remap_injected_icons(); // point markers at our added iconIds (before pins built)
@@ -1129,6 +1155,13 @@ uint32_t goblin::gfx_probe::injected_aura_iconid(uint32_t iconId)
 {
     if (iconId < FRAME_MAP_SIZE && g_aura_of_frame[iconId]) return g_aura_of_frame[iconId];
     if (iconId < (uint32_t)ICON_MAP_SIZE) return g_aura_iid[iconId];
+    return 0;
+}
+
+uint32_t goblin::gfx_probe::injected_hint_iconid(uint32_t iconId)
+{
+    if (iconId < FRAME_MAP_SIZE && g_hint_of_frame[iconId]) return g_hint_of_frame[iconId];
+    if (iconId < (uint32_t)ICON_MAP_SIZE) return g_hint_iid[iconId];
     return 0;
 }
 

@@ -30,8 +30,9 @@ nothing per frame. See `docs/AP-PROGRESSION-PINS-DESIGN.md`.
 `MFG_AP_SET_LOT_STYLES_V1` and capability bit `MFG_AP_CAP_LOT_STYLE_OVERLAY_V1`
 (2) are still exported and still validate exactly as before, so an existing
 client that publishes a style snapshot keeps receiving `MFG_AP_OK`. The accepted
-snapshot is simply never rendered. See `include/mfg_ap_readonly_v1.h`. Clients
-should stop publishing styles when convenient; there is no need to rush.
+snapshot is rendered again since 2026-09-08, but only its YELLOW entries and only
+as the build-time hint ring (`ap_hint_aura`); ORANGE is ignored in favour of the
+check-state progression bits. See `include/mfg_ap_readonly_v1.h`.
 
 The focus-highlight rings from the region-progress tab are a different feature
 and are untouched.
