@@ -67,6 +67,18 @@ inline bool check_is_progression(const CheckStateSnapshot* snapshot, uint32_t ta
     return (it->second & (in_logic_only ? MFG_AP_PROGRESSION_IN_LOGIC : MFG_AP_PROGRESSION)) != 0;
 }
 
+// The set of check keys the client leases as hinted (MFG_AP_STYLE_YELLOW), built once per
+// visibility snapshot from the style lease so the pin build does one hash probe per row.
+// Styles only ever name map/enemy lots (kinds 1/2); boss defeat flags cannot be hinted this way.
+inline std::unordered_set<uint64_t> hinted_check_keys(const LotStyleSnapshot* styles)
+{
+    std::unordered_set<uint64_t> out;
+    if (!styles) return out;
+    for (const auto& e : styles->entries)
+        if (e.style == MFG_AP_STYLE_YELLOW) out.insert(check_key(e.lot_table, e.lot_row));
+    return out;
+}
+
 // A snapshot is an additional visibility restriction, never a reveal request.
 inline bool check_filter_allows(const CheckStateSnapshot* snapshot, uint32_t table,
                                 uint32_t row, bool checks_only, bool progression_only,

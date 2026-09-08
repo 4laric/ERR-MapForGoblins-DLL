@@ -28,6 +28,11 @@ no game-flag read:
   `prog_no_twin=N` (progression rows whose icon has no twin: vanilla icons
   1-348, or the aura bitmap failed to register this load).
 - Like every build-time change, a new snapshot lands on the next map open.
+- **Hints** (`ap_hint_aura`, default on, 2026-09-08): a second twin per icon
+  with a blue ring, chosen for pins the client leases as hinted through the
+  lot-style API (`MFG_AP_STYLE_YELLOW`). A hint wins over progression on the
+  same pin. `[prune]` reports `hinted=N`. Boss defeat-flag pins cannot be
+  hinted this way because the style API only names map/enemy lots.
 
 Below is the original design note, kept for the reasoning.
 

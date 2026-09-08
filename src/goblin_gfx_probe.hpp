@@ -23,6 +23,8 @@ namespace goblin::gfx_probe
     // ring. Accepts either a marker's CURRENT iconId (an injected plain frame id) or a source iconId.
     // 0 if that icon has no aura frame (vanilla 1-348 icons, aura bitmap failed, or before load).
     uint32_t injected_aura_iconid(uint32_t iconId);
+    // Hint twin (blue ring), same contract as injected_aura_iconid.
+    uint32_t injected_hint_iconid(uint32_t iconId);
     // Lowest / highest 1-based frame id we appended this worldmap load (0,0 before load). Used by
     // remap_injected_icons to flag a marker whose iconId is ALREADY an injected frame id (a double-
     // remap = two DLL instances injected; resolves to the wrong frame when the ranges overlap).

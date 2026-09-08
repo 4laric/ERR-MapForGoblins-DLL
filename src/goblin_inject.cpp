@@ -198,6 +198,7 @@ static bool row_is_hidden(const CategoryRow &cr)
 struct VisibilitySnapshot
 {
     std::shared_ptr<const goblin::ap::CheckStateSnapshot> ap_checks;
+    std::unordered_set<uint64_t> ap_hinted;      // check_key()s leased as hinted (style YELLOW)
     std::unordered_set<uint64_t> collected;
     std::unordered_set<uint64_t> kindling;
     std::unordered_set<uint64_t> manual_hidden;  // marker_key() values
@@ -211,6 +212,8 @@ static VisibilitySnapshot take_visibility_snapshot()
 {
     VisibilitySnapshot s;
     s.ap_checks = goblin::ap::cache().active_check_states(ap_now_ms());
+    if (goblin::config::apHintAura)
+        s.ap_hinted = goblin::ap::hinted_check_keys(goblin::ap::cache().active_lot_styles(ap_now_ms()).get());
     s.collected = goblin::collected::collected_snapshot();
     s.kindling = goblin::kindling::collected_snapshot();
     {
@@ -1535,14 +1538,15 @@ void goblin::prune_hidden_pins_for_build()
 {
     const bool prune = config::pruneHiddenPinsAtBuild;
     const bool aura = config::apProgressionAura;
-    if ((!prune && !aura) || !g_param_injection_active) return;
+    const bool hint = config::apHintAura;
+    if ((!prune && !aura && !hint) || !g_param_injection_active) return;
     std::lock_guard<std::mutex> lk(g_prune_mtx);
     // Defensive: if a previous build never reached its restore (a crash inside the
     // engine, or a nested/duplicated build call), put those masks back first so we
     // can never bake a cleared mask in as if it were the baked value.
     restore_pruned_rows_locked();
     const auto snap = take_visibility_snapshot();
-    size_t total = 0, pruned = 0, prog = 0, prog_no_twin = 0;
+    size_t total = 0, pruned = 0, prog = 0, prog_no_twin = 0, hinted = 0;
     if (prune) g_pruned_rows.reserve(g_category_rows.size());
     for (auto &cr : g_category_rows)
     {
@@ -1553,17 +1557,30 @@ void goblin::prune_hidden_pins_for_build()
             // Progression aura: the shown pin's iconId becomes its aura twin (same icon over a gold
             // ring) until the build returns. One hash probe per shown row, no live flag reads; the
             // snapshot already carries reachability and progression from the client. Engine draws it.
-            if (aura && cr.check_identity.kind &&
+            // A hint wins over progression on the same pin: a hint names one specific check,
+            // progression names a whole set.
+            uint32_t twin = 0;
+            bool is_hint = false;
+            if (hint && cr.check_identity.kind &&
+                snap.ap_hinted.count(goblin::ap::check_key(cr.check_identity.kind, cr.check_identity.row)))
+            {
+                twin = goblin::gfx_probe::injected_hint_iconid(static_cast<uint32_t>(cr.p->iconId));
+                is_hint = twin != 0;
+            }
+            if (!twin && aura && cr.check_identity.kind &&
                 goblin::ap::check_is_progression(snap.ap_checks.get(), cr.check_identity.kind,
                                                  cr.check_identity.row, config::apInLogicOnly))
             {
-                const uint32_t twin = goblin::gfx_probe::injected_aura_iconid(static_cast<uint32_t>(cr.p->iconId));
-                if (!twin) { ++prog_no_twin; continue; }   // vanilla icon or aura not injected this load
+                twin = goblin::gfx_probe::injected_aura_iconid(static_cast<uint32_t>(cr.p->iconId));
+                if (!twin) ++prog_no_twin;   // vanilla icon or aura not injected this load
+            }
+            if (twin)
+            {
                 AuraRow ar{cr.p, 0};
                 if (swap_row_icon_seh(cr.p, twin, ar.icon))
                 {
                     g_aura_rows.push_back(ar);
-                    ++prog;
+                    if (is_hint) ++hinted; else ++prog;
                 }
             }
             continue;
@@ -1576,8 +1593,8 @@ void goblin::prune_hidden_pins_for_build()
             ++pruned;
         }
     }
-    spdlog::info("[prune] build: rows={} pruned={} kept={} prog={} prog_no_twin={}", total, pruned,
-                 total - pruned, prog, prog_no_twin);
+    spdlog::info("[prune] build: rows={} pruned={} kept={} prog={} prog_no_twin={} hinted={}", total, pruned,
+                 total - pruned, prog, prog_no_twin, hinted);
 }
 
 void goblin::restore_pruned_pins()

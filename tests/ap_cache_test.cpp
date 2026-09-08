@@ -37,6 +37,22 @@ static void test_check_is_progression()
     assert(!check_is_progression(&snap, 1, 999, false));
 }
 
+static void test_hinted_check_keys()
+{
+    using goblin::ap::hinted_check_keys;
+    assert(hinted_check_keys(nullptr).empty());
+    goblin::ap::LotStyleSnapshot styles;
+    styles.generation = 1;
+    styles.entries = {{1, 100, MFG_AP_STYLE_YELLOW}, {2, 200, MFG_AP_STYLE_ORANGE},
+                      {1, 300, MFG_AP_STYLE_NORMAL}, {2, 400, MFG_AP_STYLE_YELLOW}};
+    const auto keys = hinted_check_keys(&styles);
+    assert(keys.size() == 2);
+    assert(keys.count(goblin::ap::check_key(1, 100)) == 1);
+    assert(keys.count(goblin::ap::check_key(2, 400)) == 1);
+    assert(keys.count(goblin::ap::check_key(2, 200)) == 0);
+    assert(keys.count(goblin::ap::check_key(1, 300)) == 0);
+}
+
 static void test_check_presentation()
 {
     using goblin::ap::marker_check_identity;
@@ -162,6 +178,7 @@ static void test_check_states()
 int main()
 {
     test_check_is_progression();
+    test_hinted_check_keys();
     test_check_presentation();
     test_check_states();
     static_assert(sizeof(MFG_AP_InfoV1) == 16);
