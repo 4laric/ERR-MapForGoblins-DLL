@@ -28,11 +28,10 @@ This vanilla adapter does not support the separate ERR release.
 ## AP behavior
 
 The three switches under `[AP]` use `0`/`1`: `checks_only`, `progression_only`,
-and `in_logic_only`. Seed checks are enabled by default; progression-only and
-tracker reachability are opt-in. The tracker can report unknown region access
-for valid checks, so its restriction is not a safe default for all seeds.
-Replace `MapForGoblins.AP.ini` with the packaged preset when applying this fix,
-or set `in_logic_only=0` yourself; existing explicit settings are respected.
+and `in_logic_only`. Seed checks and tracker reachability are enabled by default;
+progression-only is disabled. Use the matching AP client update that resolves
+map lots through the seed's acquisition flags instead of baked AP IDs. Existing
+explicit settings are respected.
 The packaged F10 menu now combines upstream's ImGui
 settings, categories, progress and hidden-marker tools with an **Archipelago**
 section at the top. Its switches persist to `MapForGoblins.AP.ini`; editing that

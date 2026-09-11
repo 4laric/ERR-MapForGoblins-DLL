@@ -317,7 +317,7 @@ void load_options() {
     unsigned next=0;
     if(GetPrivateProfileIntW(L"AP",L"checks_only",1,file.c_str()))next|=1;
     if(GetPrivateProfileIntW(L"AP",L"progression_only",0,file.c_str()))next|=2;
-    if(GetPrivateProfileIntW(L"AP",L"in_logic_only",0,file.c_str()))next|=4;
+    if(GetPrivateProfileIntW(L"AP",L"in_logic_only",1,file.c_str()))next|=4;
     if(options.exchange(next)!=next) log("AP filter options reloaded");
 }
 DWORD WINAPI start(void*) {
