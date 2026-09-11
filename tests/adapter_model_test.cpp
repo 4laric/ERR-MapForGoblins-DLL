@@ -3,6 +3,13 @@
 #include <iostream>
 int main() {
     using namespace mfg213;
+    assert(initialization_menu_mode(1,0xa889b)==0);
+    for(int mode=0;mode<3;++mode) {
+        for(uintptr_t caller:{uintptr_t{0x731ca},uintptr_t{0x7a95e},uintptr_t{0x8c921},
+                             uintptr_t{0x8e6a9},uintptr_t{0xa26ca},uintptr_t{0xa26d8},uintptr_t{0xa272e}})
+            assert(initialization_menu_mode(mode,caller)==mode);
+        if(mode!=1)assert(initialization_menu_mode(mode,0xa889b)==mode);
+    }
     Identities ids{{123,{123,1,456,{1,456}}}};
     assert(find(ids,123)==find(ids,123|(uint64_t{1}<<63)));
     assert(!find(ids,124));
@@ -16,6 +23,31 @@ int main() {
     assert(!allowed(find(ids,123),&empty,6));
     empty.flags.begin()->second=15;
     assert(allowed(find(ids,123),&empty,7));
+    // Alternatives must agree with the actual filter for every valid state and
+    // option combination, including progression/logic on different checks.
+    for(const unsigned state:{1u,3u,5u,7u,15u}) {
+        empty.flags.begin()->second=state;
+        for(unsigned options=0;options<8;++options) {
+            FilterCounts counts;
+            counts.observe(find(ids,123),&empty,options,true);
+            assert(counts.seed==1);
+            assert(counts.logic==static_cast<unsigned>(allowed(find(ids,123),&empty,5)));
+            assert(counts.progression==static_cast<unsigned>(allowed(find(ids,123),&empty,3)));
+            assert(counts.both==static_cast<unsigned>(allowed(find(ids,123),&empty,7)));
+            assert(counts.without_logic==static_cast<unsigned>(allowed(find(ids,123),&empty,options&~4u)));
+            counts.observe(nullptr,&empty,options,true);
+            counts.observe(find(ids,123),&empty,options,false);
+            assert(counts.tested==3 && counts.upstream_hidden==1 && counts.unmatched==1);
+            assert(counts.seed==1); // Upstream-hidden rows never become candidates.
+        }
+    }
+    FilterCounts inactive;
+    inactive.observe(find(ids,123),nullptr,7,true);
+    assert(inactive.tested==1 && inactive.seed==0 && inactive.unmatched==0);
+    goblin::ap::CheckStateSnapshot no_checks{2,{}};
+    FilterCounts active_empty;
+    active_empty.observe(find(ids,123),&no_checks,5,true);
+    assert(active_empty.unmatched==1 && active_empty.without_logic==0);
     bool rejected=false;
     try { (void)identities({}); } catch (const std::runtime_error&) { rejected=true; }
     assert(rejected);

@@ -6,6 +6,9 @@
 #include <unordered_map>
 
 namespace mfg213 {
+inline int initialization_menu_mode(int mode,uintptr_t return_rva) {
+    return mode==1 && return_rva==0xa889b ? 0 : mode;
+}
 inline constexpr char sha256[] = "ed984d5bb3ee49e304ab02e5ac1bc1bfc3a6368c2bc8743f85edefe2a73f2ea3";
 inline constexpr size_t entries_rva = 0x1d7850, entry_size = 296, entry_count = 7039;
 template<class T> T field(const void* p, size_t offset) {
@@ -42,4 +45,22 @@ inline bool allowed(const Identity* id, const goblin::ap::CheckStateSnapshot* ch
     return goblin::ap::check_filter_allows(checks,id?id->check.kind:0,id?id->check.row:0,
         (options&1)!=0,(options&2)!=0,(options&4)!=0);
 }
+// Count independent alternatives against the same immutable snapshot. These
+// counters explain filtering; they never override upstream visibility.
+struct FilterCounts {
+    uint32_t tested{}, upstream_hidden{}, unmatched{}, seed{}, logic{}, progression{}, both{}, without_logic{};
+    bool operator==(const FilterCounts&) const = default;
+    void observe(const Identity* id, const goblin::ap::CheckStateSnapshot* checks,
+                 unsigned options, bool upstream_visible) {
+        ++tested;
+        if(!upstream_visible) { ++upstream_hidden; return; }
+        if(!checks)return;
+        if(!allowed(id,checks,1)) { ++unmatched; return; }
+        ++seed;
+        logic+=allowed(id,checks,5);
+        progression+=allowed(id,checks,3);
+        both+=allowed(id,checks,7);
+        without_logic+=allowed(id,checks,options&~4u);
+    }
+};
 }

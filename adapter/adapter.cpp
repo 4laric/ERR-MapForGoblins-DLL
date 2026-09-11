@@ -3,6 +3,7 @@
 #include <windows.h>
 #include <bcrypt.h>
 #include <MinHook.h>
+#include <intrin.h>
 #include "release213.hpp"
 #include <atomic>
 #include <chrono>
@@ -16,6 +17,21 @@ HMODULE self_module{};
 unsigned char* upstream{};
 std::atomic<bool> ready{false};
 std::atomic<unsigned> options{0};
+std::mutex options_mutex;
+std::atomic<uint64_t> last_view_counts{0};
+std::atomic<bool> have_view_counts{false};
+std::atomic<bool> settings_save_failed{false};
+struct Diagnostic {
+    mfg213::FilterCounts counts;
+    unsigned flags{};
+    int layer{};
+    bool active{};
+    size_t supplied{};
+    bool operator==(const Diagnostic&) const = default;
+};
+std::mutex diagnostic_mutex;
+Diagnostic diagnostic;
+bool diagnostic_ready=false;
 mfg213::Identities identities;
 goblin::ap::HoverCache cache;
 std::mutex catalog_mutex;
@@ -65,12 +81,15 @@ void install_catalog() {
 struct Scope {
     std::shared_ptr<const goblin::ap::CheckStateSnapshot> checks;
     unsigned flags;
+    uint32_t native_candidates=0;
+    bool count_candidates=false;
+    mfg213::FilterCounts counts;
     Scope():checks(cache.active_check_states(millis())),flags(options.load()){}
 };
-thread_local const Scope* current_scope{};
+thread_local Scope* current_scope{};
 struct ScopeGuard {
     Scope scope;
-    const Scope* previous=current_scope;
+    Scope* previous=current_scope;
     ScopeGuard(){current_scope=&scope;}
     ~ScopeGuard(){current_scope=previous;}
 };
@@ -86,9 +105,17 @@ bool permits(uint64_t key) {
 using Predicate=bool(*)(void*,int,int);
 Predicate original_predicate{};
 bool predicate(void* category,int layer,int focus) {
-    if (!original_predicate(category,layer,focus)) return false;
+    const bool native=original_predicate(category,layer,focus);
+    if(!native) {
+        if(current_scope && current_scope->count_candidates)
+            current_scope->counts.observe(nullptr,current_scope->checks.get(),current_scope->flags,false);
+        return false;
+    }
+    if (current_scope && current_scope->count_candidates) ++current_scope->native_candidates;
     uint64_t key{};
     if (!copy_memory(&key,static_cast<unsigned char*>(category)+24,sizeof(key))) return false;
+    if(current_scope && current_scope->count_candidates)
+        current_scope->counts.observe(mfg213::find(identities,key),current_scope->checks.get(),current_scope->flags,true);
     try { return permits(key); } catch (...) { return false; }
 }
 struct PointVector { unsigned char* first; unsigned char* last; unsigned char* capacity; };
@@ -96,15 +123,146 @@ using Points=PointVector*(*)(PointVector*,int,bool);
 Points original_points{};
 PointVector* points(PointVector* out,int layer,bool all) {
     ScopeGuard scope;
+    scope.scope.count_candidates=true;
     auto* result=original_points(out,layer,all);
     // Keep the allocation and cardinality upstream owns. Only intersect its
     // visible byte, including the companion completion-badge identity.
-    if (scope.scope.checks && scope.scope.flags && out->first && out->last>=out->first && (out->last-out->first)%40==0 &&
+    if (out->first && out->last>=out->first && (out->last-out->first)%40==0 &&
         static_cast<size_t>(out->last-out->first)<=20000*40) {
-        for (auto* p=out->first;p!=out->last;p+=40)
-            if (!permits(mfg213::field<uint64_t>(p,0))) p[28]=0;
+        uint32_t visible=0;
+        for (auto* p=out->first;p!=out->last;p+=40) {
+            const auto key=mfg213::field<uint64_t>(p,0);
+            if(scope.scope.checks && scope.scope.flags && !permits(key))p[28]=0;
+            if(p[28] && !(key>>63))++visible;
+        }
+        if(!all) {
+            last_view_counts.store((uint64_t{scope.scope.native_candidates}<<32)|visible);
+            have_view_counts.store(true);
+            std::lock_guard lock(diagnostic_mutex);
+            diagnostic={scope.scope.counts,scope.scope.flags,layer,
+                static_cast<bool>(scope.scope.checks),scope.scope.checks?scope.scope.checks->flags.size():0};
+            diagnostic_ready=true;
+        }
     }
     return result;
+}
+
+// These are upstream's own ImGui widgets, called only inside its Settings tab.
+// No second ImGui context, graphics device, window or input hook is created.
+using DrawSettings=void(*)();
+using TextWrapped=void(*)(const char*,...);
+using Checkbox=bool(*)(const char*,bool*);
+using SliderScalar=bool(*)(const char*,int,void*,const void*,const void*,const char*,int);
+DrawSettings original_settings{};
+using DrawSection=void(*)(const void*,bool*);
+DrawSection original_section{};
+using MenuMode=int(*)();
+MenuMode original_menu_mode{};
+int menu_mode() {
+    // 2.1.3 a8896 calls this getter during hook installation. Its imgui
+    // branch skips a891c..aa0aa, including native attachMovie hooks at
+    // a9e02/aa053. Runtime callers must retain the user's actual menu mode.
+    const auto caller=reinterpret_cast<uintptr_t>(_ReturnAddress());
+    const int mode=original_menu_mode();
+    return mfg213::initialization_menu_mode(mode,caller-reinterpret_cast<uintptr_t>(upstream));
+}
+
+// Upstream's legacy ImGui section drawer has no Float case: type 6 falls
+// through to gamepad rebinding at 8716c. Render the Goblin section's newer
+// numeric controls with its existing SliderScalar widget instead. All other
+// sections retain their upstream UI. Schema section stride=48, entry=64;
+// begin/end at 18/20, entry type/target at 8/10 (862e0 and 87dbc call site).
+void draw_section(const void* section,bool* changed) {
+    const auto name=mfg213::field<const char*>(section,0);
+    if(std::strcmp(name,"Goblin")!=0) { original_section(section,changed); return; }
+    const auto first=mfg213::field<const unsigned char*>(section,24);
+    const auto last=mfg213::field<const unsigned char*>(section,32);
+    if(!first || last<first || (last-first)%64 || last-first>64*64)return;
+    const auto text=reinterpret_cast<TextWrapped>(upstream+0x109370);
+    const auto checkbox=reinterpret_cast<Checkbox>(upstream+0x10b3c0);
+    const auto slider=reinterpret_cast<SliderScalar>(upstream+0x10dba0);
+    text("%s","Map visibility and emphasis");
+    for(auto* e=first;e!=last;e+=64) {
+        const auto key=mfg213::field<const char*>(e,0);
+        const auto type=mfg213::field<uint8_t>(e,8);
+        auto* target=mfg213::field<void*>(e,16);
+        if(!target || e[40] || e[56])continue;
+        const char* label=nullptr;
+        if(type==0) {
+            if(std::strcmp(key,"require_map_fragments")==0)label="Require area map discovery";
+            if(std::strcmp(key,"location_emphasis")==0)label="Emphasize the area I am in";
+            if(label && checkbox(label,static_cast<bool*>(target)))*changed=true;
+        } else if(type==6) {
+            float low=0.5f,high=2.0f;
+            if(std::strcmp(key,"location_emphasis_own_scale")==0)label="Current area marker size";
+            if(std::strcmp(key,"location_emphasis_other_scale")==0)label="Other area marker size";
+            if(std::strcmp(key,"location_emphasis_other_fade")==0) {
+                label="Other area opacity";low=0.2f;high=1.0f;
+            }
+            if(std::strcmp(key,"location_emphasis_other_cool")==0) {
+                label="Other area cool tint";low=0.0f;high=1.0f;
+            }
+            // map_panel_offset_percent already has a proper slider at the top.
+            if(label && slider(label,8,target,&low,&high,"%.2f",16))*changed=true;
+        }
+    }
+}
+
+bool save_options(unsigned flags) {
+    std::lock_guard lock(options_mutex);
+    std::wstring section;
+    const wchar_t* names[]{L"checks_only",L"progression_only",L"in_logic_only"};
+    for(unsigned i=0;i<3;++i) {
+        section+=names[i]; section+=L"="; section+=(flags&(1u<<i))?L"1":L"0";
+        section.push_back(L'\0');
+    }
+    section.push_back(L'\0');
+    if(!WritePrivateProfileSectionW(L"AP",section.c_str(),(directory/L"MapForGoblins.AP.ini").c_str())) {
+        settings_save_failed.store(true); log("Could not save AP menu settings"); return false;
+    }
+    options.store(flags);
+    settings_save_failed.store(false);
+    return true;
+}
+
+void draw_settings() {
+    const auto text=reinterpret_cast<TextWrapped>(upstream+0x109370);
+    const auto checkbox=reinterpret_cast<Checkbox>(upstream+0x10b3c0);
+    const auto snapshot=cache.active_check_states(millis());
+    text("%s",snapshot?"Archipelago - filter data active":"Archipelago - no active filter data");
+    if(snapshot) text("%zu check identities supplied by the client",snapshot->flags.size());
+    else text("%s","AP filters are inactive. The map uses upstream visibility.");
+    unsigned flags=options.load();
+    bool changed=false;
+    const char* labels[]{"Checks in this seed##ap_checks","Progression items only##ap_progression",
+                         "Reachable according to tracker##ap_logic"};
+    for(unsigned i=0;i<3;++i) {
+        bool value=(flags&(1u<<i))!=0;
+        if(checkbox(labels[i],&value)) {
+            if(value)flags|=1u<<i;else flags&=~(1u<<i);
+            changed=true;
+        }
+    }
+    if(changed)save_options(flags);
+    if(settings_save_failed.load())text("%s","Could not save AP settings. Check that MapForGoblins.AP.ini is writable.");
+    if(have_view_counts.load()) {
+        const auto counts=last_view_counts.load();
+        text("Last map layer: %u upstream candidates; %u after AP filters",
+             static_cast<unsigned>(counts>>32),static_cast<unsigned>(counts));
+    }
+    {
+        Diagnostic d; bool valid;
+        {std::lock_guard lock(diagnostic_mutex);d=diagnostic;valid=diagnostic_ready;}
+        if(valid && d.active) {
+            text("Seed-matched candidates: %u; reachable: %u; progression: %u; both: %u",
+                d.counts.seed,d.counts.logic,d.counts.progression,d.counts.both);
+            text("With tracker filter off: %u matched candidates. Unmatched: %u. Upstream rejected: %u.",
+                d.counts.without_logic,d.counts.unmatched,d.counts.upstream_hidden);
+            text("%s","Counts describe predicate evaluations on the last map layer, not checks in the current viewport.");
+        }
+    }
+    text("%s","Missing pins? Turn off the tracker filter first. Category, discovery and collected-marker filters below still apply. Some checks have no matched pin.");
+    original_settings();
 }
 using Hover=void*(*)(void*,void*,void*);
 Hover original_hover{};
@@ -154,6 +312,7 @@ std::string hash_file(HANDLE file) {
     return hex;
 }
 void load_options() {
+    std::lock_guard lock(options_mutex);
     const auto file=(directory/L"MapForGoblins.AP.ini").wstring();
     unsigned next=0;
     if(GetPrivateProfileIntW(L"AP",L"checks_only",1,file.c_str()))next|=1;
@@ -191,7 +350,10 @@ DWORD WINAPI start(void*) {
             {0x444b0,reinterpret_cast<void*>(points),reinterpret_cast<void**>(&original_points)},
             {0xcdfb0,reinterpret_cast<void*>(hover),reinterpret_cast<void**>(&original_hover)},
             {0xcc390,reinterpret_cast<void*>(build),reinterpret_cast<void**>(&original_build)},
-            {0x8f390,reinterpret_cast<void*>(close_map),reinterpret_cast<void**>(&original_close)}};
+            {0x8f390,reinterpret_cast<void*>(close_map),reinterpret_cast<void**>(&original_close)},
+            {0x875b0,reinterpret_cast<void*>(draw_settings),reinterpret_cast<void**>(&original_settings)},
+            {0x862e0,reinterpret_cast<void*>(draw_section),reinterpret_cast<void**>(&original_section)},
+            {0x1bc50,reinterpret_cast<void*>(menu_mode),reinterpret_cast<void**>(&original_menu_mode)}};
         for(auto& h:hooks) {
             if(MH_CreateHook(upstream+h.rva,h.hook,h.original)!=MH_OK) {
                 MH_Uninitialize(); throw std::runtime_error("Adapter hook creation failed; none enabled");
@@ -203,9 +365,23 @@ DWORD WINAPI start(void*) {
             ready.store(false); cache.set_hooks_ready(false); MH_DisableHook(MH_ALL_HOOKS);
             throw std::runtime_error("Adapter hook enable failed");
         }
-        log("Pinned 2.1.3 loaded; five AP hooks armed; game validation required");
-        // Resident DLL. Only configuration file I/O occurs on this worker.
-        for(;;){Sleep(1000);load_options();}
+        log("Pinned 2.1.3 loaded; eight AP hooks armed; ImGui native-attachment initialization corrected");
+        // File I/O stays off render callbacks. Log only changed diagnostics.
+        Diagnostic previous;bool logged=false;
+        for(;;){
+            Sleep(1000);load_options();
+            Diagnostic d;bool valid;
+            {std::lock_guard lock(diagnostic_mutex);d=diagnostic;valid=diagnostic_ready;}
+            if(valid && (!logged || !(d==previous))) {
+                char line[512];
+                std::snprintf(line,sizeof(line),
+                    "AP visibility layer=%d active=%u options=%u supplied=%zu tested=%u upstream_hidden=%u unmatched=%u seed=%u logic=%u progression=%u both=%u without_logic=%u",
+                    d.layer,static_cast<unsigned>(d.active),d.flags,d.supplied,d.counts.tested,
+                    d.counts.upstream_hidden,d.counts.unmatched,d.counts.seed,d.counts.logic,
+                    d.counts.progression,d.counts.both,d.counts.without_logic);
+                log(line);previous=d;logged=true;
+            }
+        }
     } catch(const std::exception& e) { log(e.what()); }
     catch(...) {log("Adapter initialization failed");}
     return 1;

@@ -16,7 +16,12 @@ def child(path):
     log = path.parent / "MapForGoblins.AP.log"
     deadline = time.monotonic() + 10
     while time.monotonic() < deadline:
-        if log.exists() and "Unsupported upstream SHA256" in log.read_text():
+        try:
+            report = log.read_text()
+        except (FileNotFoundError, PermissionError):
+            # The worker may be creating/writing the Windows CRT log right now.
+            report = ""
+        if "Unsupported upstream SHA256" in report:
             break
         time.sleep(0.05)
     else:

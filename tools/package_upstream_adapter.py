@@ -20,6 +20,18 @@ def main():
     with zipfile.ZipFile(args.upstream) as release:
         dll = release.read("MapForGoblins.dll")
         ini = release.read("MapForGoblins.ini")
+        # Both menu modes use the same native marker renderer. Choose the overlay
+        # menu so the adapter's AP section and upstream controls share one panel.
+        old = b"menu_render_mode = native"
+        if ini.count(old) != 1:
+            raise SystemExit("Unexpected upstream menu preset")
+        ini = ini.replace(old, b"menu_render_mode = imgui")
+        for before, after in ((b"overlay_font_scale = 1.0", b"overlay_font_scale = 1.2"),
+                              (b"overlay_window_w = 560", b"overlay_window_w = 780"),
+                              (b"overlay_window_h = 680", b"overlay_window_h = 900")):
+            if ini.count(before) != 1:
+                raise SystemExit("Unexpected upstream overlay geometry preset")
+            ini = ini.replace(before, after)
         license_text = release.read("LICENSE.txt")
     if hashlib.sha256(dll).hexdigest() != PIN:
         raise SystemExit("Unsupported upstream release: SHA-256 does not match 2.1.3 pin")

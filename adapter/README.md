@@ -28,9 +28,22 @@ This vanilla adapter does not support the separate ERR release.
 ## AP behavior
 
 The three switches under `[AP]` use `0`/`1`: `checks_only`, `progression_only`,
-and `in_logic_only`. Defaults match the source fork: checks and in-logic enabled,
-progression-only disabled. These switches are presently **INI controls**, not
-entries in upstream's native menu. The fork's old overlay is not loaded.
+and `in_logic_only`. Seed checks and tracker reachability are enabled by default;
+progression-only is disabled. Use the matching AP client update that resolves
+map lots through the seed's acquisition flags instead of baked AP IDs. Existing
+explicit settings are respected.
+The packaged F10 menu now combines upstream's ImGui
+settings, categories, progress and hidden-marker tools with an **Archipelago**
+section at the top. Its switches persist to `MapForGoblins.AP.ini`; editing that
+file still works. The panel reports whether a client snapshot is active and the
+last map layer's upstream/filtered marker counts, so missing pins can be narrowed
+down without guessing which filter is responsible.
+
+The package selects `menu_render_mode = imgui` in `MapForGoblins.ini`. Existing
+installs must make that change and restart to use the combined panel. Upstream's
+`native` menu remains an optional fallback; it has no AP section. Menu mode does
+not select the marker renderer: both use upstream's fast native marker path.
+No second overlay window, graphics backend or input hook is installed.
 
 Restrictions intersect upstream visibility and never reveal markers hidden by
 upstream. Completion badges inherit the parent marker's AP restriction. Exact
@@ -65,7 +78,22 @@ installation. It never includes the diagnostic client.
 ## Integration boundaries
 
 Pinned upstream function RVAs: settings predicate `43a10`, native point snapshot
-`444b0`, final hover callback `cdfb0`, map build `cc390`, close `8f390`. The snapshot
+`444b0`, final hover callback `cdfb0`, map build `cc390`, close `8f390`,
+ImGui Settings tab `875b0`, section drawer `862e0`, and menu-mode getter `1bc50`.
+The getter override applies only to return address `a889b` during initialization:
+upstream's ImGui branch otherwise skips the shared attachment hook setup along
+with the native menu setup. All runtime callers retain the configured mode.
+The settings hook calls upstream's own
+`TextWrapped` (`109370`) and `Checkbox` (`10b3c0`) within that tab's active
+context. The Goblin section uses `SliderScalar` (`10dba0`, data type 8 = float,
+verified at `87744`) for the new emphasis floats. Upstream's old generic ImGui
+drawer lacks a Float case and otherwise treats them as gamepad rebinds at `8716c`.
+Other sections remain upstream-owned. The numeric controls choose normal ranges
+of 0.5–2 for size, 0.2–1 for opacity, and 0–1 for cool tint; only interaction changes
+values. Their calling conventions were checked against the call sites at
+`8764d` and `8693f`; bool target pointers are temporary locals, never retained.
+The Settings tab is identified by the `##scroll` references at `87cce` and
+its calls to the schema section renderer at `87dbc`. The snapshot
 contains 40-byte entries with a visibility byte at `1c`; bit 63 of a completion
 badge ID is stripped solely for AP identity matching. Static baked entries begin
 at `1d7850`, stride 296, count 7039; metadata is copied from that image. Catalogue
@@ -120,3 +148,39 @@ remain unverified. Keep this package experimental until those gates are complete
 The final build additionally skips identity lookups and the restriction pass when
 no AP restriction is active; this equivalent fast path was compiled/model-tested
 after the live run.
+# Missing-pin diagnostics
+
+The AP settings panel and `MapForGoblins.AP.log` report alternative filter
+counts for the last evaluated map layer. Log writes happen on the configuration
+worker, once per second at most and only when the diagnostic values change.
+They do not contain server credentials or check names.
+
+Interpret the counts in this order:
+
+* `active=0`: no current leased snapshot; AP filters are not restricting pins.
+* `active=1 supplied=0`: the client supplied an active empty snapshot. This is
+  distinct from a disconnected client and intentionally hides seed-filtered pins.
+* `unmatched`: upstream-visible candidates absent from the client snapshot.
+  This includes non-check markers; it is not by itself a mapping-error count.
+  Check seed identity/name compatibility and lot matching if expected loot is absent.
+* `seed` versus `logic`: a large reduction is attributable to the client's
+  reachability flags. Unknown region mappings are not asserted reachable.
+* `without_logic`: matched candidates that pass the current settings with only
+  the tracker restriction removed. Progression-only remains applied if selected.
+* `upstream_hidden`: evaluations rejected before AP filtering. These include
+  other layers and upstream category, discovery and collected-marker restrictions;
+  this aggregate does not identify which upstream rule rejected a specific pin.
+
+Counts are predicate evaluations, not unique AP checks or viewport counts. The
+adapter never calls the upstream predicate extra times to obtain diagnostics.
+If the same missing pins survive disabling the tracker restriction, turn off
+progression-only next, then temporarily disable all three AP restrictions to
+isolate upstream visibility. Restore desired settings afterwards. Upstream's
+area-discovery option and category controls are available in the same panel.
+Do not automatically reveal unmatched or collected pins: an empty seed, a
+completed area and an identity mismatch can otherwise look identical.
+
+The September 11 tester logs prove both DLLs loaded and the catalogue installed;
+they do not prove the cause of the Farum Azula reduction. This diagnostic build
+does not claim to fix that report. The expanded panel still needs final live
+layout/slider validation before stable release.
