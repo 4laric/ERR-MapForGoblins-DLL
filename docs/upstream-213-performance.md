@@ -1,12 +1,15 @@
 # Upstream 2.1.3 performance reconstruction
 
-Investigated 2026-09-11. **Partial port, not performance parity.** The supplied
+Investigated 2026-09-11. **Two implementation paths; no comparative FPS claim.** The supplied
 release contains a new native marker manager, not just a faster version of our
 old layout hook. This branch ports exact projection caching into our existing
 focus-highlight path. General map FPS, first-open time, and upstream's viewport
-renderer remain unported. The supplied upstream DLL was subsequently run offline
+renderer remain unported in the old source-built DLL. With the user's approval,
+the separate [AP adapter](../adapter/README.md) now runs the supplied renderer
+unchanged behind version-specific AP hooks. The supplied upstream DLL was run offline
 on a separate copy of the user's save for read-only lifecycle investigation;
-this is not yet a comparative performance or AP integration playtest.
+and the adapter's API was exercised with a diagnostic client. This is not yet a
+comparative performance or real AP-server playtest.
 
 ## Inputs and reproducibility
 
@@ -102,6 +105,12 @@ AP progression rings, skip stock layout, or change AP visibility rules.
 * Live vanilla/AP frame time and visual behavior: **not tested**.
 
 ## Remaining renderer work
+
+The source-port work below is deferred in favor of the binary-backed adapter.
+The adapter owns no native children and leaves creation, viewport reconciliation,
+and teardown entirely upstream. Its controlled live validation is recorded in
+`adapter/README.md`. The earlier projection-cache patch remains available for
+the old source-built renderer, but is not part of the adapter's execution path.
 
 ### Live upstream observations
 
