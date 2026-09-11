@@ -24,8 +24,31 @@ jobs:
         run: |
           g++ -std=c++20 -Wall -Wextra -Werror -fsanitize=address,undefined tests/live_label_test.cpp -o /tmp/live-label-test
           /tmp/live-label-test
+      - name: Exercise exact projection cache and generation invalidation
+        run: |
+          g++ -std=c++20 -Wall -Wextra -Werror -pthread -fsanitize=address,undefined tests/projection_cache_test.cpp -o /tmp/projection-cache-test
+          /tmp/projection-cache-test
       - name: Check baseline input inventory
         run: python3 -m unittest discover -s tools -p test_baseline_manifest.py -v
+      - name: Exercise pinned adapter identity decoding and filter semantics
+        run: |
+          g++ -std=c++20 -Wall -Wextra -Werror -pthread -fsanitize=address,undefined tests/adapter_model_test.cpp -o /tmp/adapter-model-test
+          /tmp/adapter-model-test
+  windows-adapter:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install compatible CMake
+        run: python -m pip install cmake==3.31.6
+      - name: Configure pinned upstream adapter and diagnostic client
+        run: cmake -S adapter -B builds/adapter -A x64 -DMFG_BUILD_SMOKE_CLIENT=ON
+      - name: Compile adapter and diagnostic client
+        run: cmake --build builds/adapter --config Release
+      - name: Test adapter model
+        run: ctest --test-dir builds/adapter -C Release --output-on-failure
   windows-compile-only:
     # Public ERR-generated tables exercise compilation only. They are not the
     # vanilla/AP runtime data and no DLL from this job is published.
