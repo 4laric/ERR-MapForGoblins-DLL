@@ -42,4 +42,22 @@ inline bool allowed(const Identity* id, const goblin::ap::CheckStateSnapshot* ch
     return goblin::ap::check_filter_allows(checks,id?id->check.kind:0,id?id->check.row:0,
         (options&1)!=0,(options&2)!=0,(options&4)!=0);
 }
+// Count independent alternatives against the same immutable snapshot. These
+// counters explain filtering; they never override upstream visibility.
+struct FilterCounts {
+    uint32_t tested{}, upstream_hidden{}, unmatched{}, seed{}, logic{}, progression{}, both{}, without_logic{};
+    bool operator==(const FilterCounts&) const = default;
+    void observe(const Identity* id, const goblin::ap::CheckStateSnapshot* checks,
+                 unsigned options, bool upstream_visible) {
+        ++tested;
+        if(!upstream_visible) { ++upstream_hidden; return; }
+        if(!checks)return;
+        if(!allowed(id,checks,1)) { ++unmatched; return; }
+        ++seed;
+        logic+=allowed(id,checks,5);
+        progression+=allowed(id,checks,3);
+        both+=allowed(id,checks,7);
+        without_logic+=allowed(id,checks,options&~4u);
+    }
+};
 }
