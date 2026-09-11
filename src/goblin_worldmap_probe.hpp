@@ -13,6 +13,10 @@ namespace goblin::worldmap_probe
     // Call once at DLL init, before modutils::enable_hooks().
     void setup();
 
+    // Called by the existing map-build hook, before the original builder.
+    // Invalidates copied projections even when the engine reuses a VM address.
+    void begin_build();
+
     // Fold (area, grid, area-local pos) -> map-space (u,v) via the captured converter.
     // Returns false if the view-model has not been captured yet (the world map has not
     // been opened this session), if the captured view-model has gone stale (the engine

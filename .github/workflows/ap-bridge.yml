@@ -24,6 +24,10 @@ jobs:
         run: |
           g++ -std=c++20 -Wall -Wextra -Werror -fsanitize=address,undefined tests/live_label_test.cpp -o /tmp/live-label-test
           /tmp/live-label-test
+      - name: Exercise exact projection cache and generation invalidation
+        run: |
+          g++ -std=c++20 -Wall -Wextra -Werror -pthread -fsanitize=address,undefined tests/projection_cache_test.cpp -o /tmp/projection-cache-test
+          /tmp/projection-cache-test
       - name: Check baseline input inventory
         run: python3 -m unittest discover -s tools -p test_baseline_manifest.py -v
   windows-compile-only:

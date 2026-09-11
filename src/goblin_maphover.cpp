@@ -12,6 +12,7 @@
 #include "goblin_maphover.hpp"
 #include "goblin_ap_cache.hpp"
 #include "goblin_inject.hpp"
+#include "goblin_worldmap_probe.hpp"
 
 #include "modutils.hpp"
 
@@ -48,6 +49,7 @@ namespace
 
     void *build_detour(void *owner, void *ctx, void *a, void *b)
     {
+        goblin::worldmap_probe::begin_build();
         goblin::ap::cache().map_rebuild();
         g_map_owner.store(owner, std::memory_order_relaxed);
         // ctx = dialogData. The displayed map id lives at *(int*)(dialogData+8) and its top

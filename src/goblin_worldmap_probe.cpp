@@ -1,6 +1,7 @@
 // See goblin_worldmap_probe.hpp. Captures CS::WorldMapViewModel from the engine's
 // world->map-space converter and re-invokes that converter to fold any marker.
 #include "goblin_worldmap_probe.hpp"
+#include "goblin_projection_cache.hpp"
 
 #include "modutils.hpp"
 
@@ -23,6 +24,10 @@ namespace
 
     std::atomic<void *> g_vm{nullptr};
     std::atomic<uint64_t> g_last_ms{0};
+    std::atomic<uint64_t> g_projection_epoch{1};
+    std::mutex g_context_mutex;
+    std::atomic<bool> g_build_seen{false};
+    goblin::worldmap_probe::ProjectionCache g_projections;
 
     // How long a captured WorldMapViewModel stays usable after the engine last drove the
     // converter itself. We do NOT own the VM: the engine frees it (and the per-map
@@ -42,7 +47,15 @@ namespace
 
     char convert_detour(void *vm, Vec2 *out, uint32_t *packed, Vec3 *world_local)
     {
-        g_vm.store(vm, std::memory_order_relaxed);
+        if (g_vm.load(std::memory_order_relaxed) != vm)
+        {
+            std::lock_guard lock(g_context_mutex);
+            if (g_vm.load(std::memory_order_relaxed) != vm)
+            {
+                g_projection_epoch.fetch_add(1, std::memory_order_acq_rel);
+                g_vm.store(vm, std::memory_order_relaxed);
+            }
+        }
         g_last_ms.store(GetTickCount64(), std::memory_order_relaxed);
         return o_convert(vm, out, packed, world_local);
     }
@@ -61,6 +74,14 @@ namespace
         }
         __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
     }
+}
+
+void goblin::worldmap_probe::begin_build()
+{
+    std::lock_guard lock(g_context_mutex);
+    g_vm.store(nullptr, std::memory_order_relaxed);
+    g_projection_epoch.fetch_add(1, std::memory_order_acq_rel);
+    g_build_seen.store(true, std::memory_order_release);
 }
 
 void goblin::worldmap_probe::setup()
@@ -82,7 +103,13 @@ void goblin::worldmap_probe::setup()
 bool goblin::worldmap_probe::project(uint8_t area, uint16_t gx, uint16_t gz, float px, float pz,
                                      float &map_u, float &map_v)
 {
-    void *vm = g_vm.load(std::memory_order_relaxed);
+    uint64_t epoch;
+    void *vm;
+    {
+        std::lock_guard lock(g_context_mutex);
+        epoch = g_projection_epoch.load(std::memory_order_acquire);
+        vm = g_vm.load(std::memory_order_relaxed);
+    }
     if (!vm || !o_convert) return false;  // VM captured on first map open; overlay only calls while open
 
     // Lifetime guard: the VM belongs to the engine and is freed with the map data. Only
@@ -90,14 +117,35 @@ bool goblin::worldmap_probe::project(uint8_t area, uint16_t gx, uint16_t gz, flo
     // VM_STALE_MS). Drop the pointer once it goes stale so we never keep a dangling VM
     // across a teardown - the next engine call re-captures a live one.
     const uint64_t last = g_last_ms.load(std::memory_order_relaxed);
-    if (GetTickCount64() - last > VM_STALE_MS)
+    const uint64_t now = GetTickCount64();
+    if (now < last || now - last > VM_STALE_MS)
     {
-        g_vm.store(nullptr, std::memory_order_relaxed);
+        std::lock_guard lock(g_context_mutex);
+        // Do not erase a different VM published concurrently by the engine.
+        if (g_vm.compare_exchange_strong(vm, nullptr, std::memory_order_relaxed))
+            g_projection_epoch.fetch_add(1, std::memory_order_acq_rel);
         return false;
     }
 
     const uint32_t packed = (static_cast<uint32_t>(area) << 24) |
                             ((static_cast<uint32_t>(gx) & 0xFF) << 16) |
                             ((static_cast<uint32_t>(gz) & 0xFF) << 8);
-    return seh_fold(vm, packed, px, pz, map_u, map_v);
+    const bool cacheable = g_build_seen.load(std::memory_order_acquire) &&
+                          std::isfinite(px) && std::isfinite(pz);
+    const auto key = ProjectionKey::make(packed, px, pz);
+    Projection value{};
+    if (cacheable && g_projections.find(epoch, key, value))
+    {
+        if (epoch != g_projection_epoch.load(std::memory_order_acquire)) return false;
+        map_u = value.u;
+        map_v = value.v;
+        return true;
+    }
+    if (!seh_fold(vm, packed, px, pz, value.u, value.v)) return false;
+    if (epoch != g_projection_epoch.load(std::memory_order_acquire) ||
+        vm != g_vm.load(std::memory_order_relaxed)) return false;
+    if (cacheable) g_projections.remember(epoch, key, value);
+    map_u = value.u;
+    map_v = value.v;
+    return true;
 }
