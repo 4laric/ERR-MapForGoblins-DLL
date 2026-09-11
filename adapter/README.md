@@ -28,8 +28,12 @@ This vanilla adapter does not support the separate ERR release.
 ## AP behavior
 
 The three switches under `[AP]` use `0`/`1`: `checks_only`, `progression_only`,
-and `in_logic_only`. Defaults match the source fork: checks and in-logic enabled,
-progression-only disabled. The packaged F10 menu now combines upstream's ImGui
+and `in_logic_only`. Seed checks are enabled by default; progression-only and
+tracker reachability are opt-in. The tracker can report unknown region access
+for valid checks, so its restriction is not a safe default for all seeds.
+Replace `MapForGoblins.AP.ini` with the packaged preset when applying this fix,
+or set `in_logic_only=0` yourself; existing explicit settings are respected.
+The packaged F10 menu now combines upstream's ImGui
 settings, categories, progress and hidden-marker tools with an **Archipelago**
 section at the top. Its switches persist to `MapForGoblins.AP.ini`; editing that
 file still works. The panel reports whether a client snapshot is active and the
@@ -76,7 +80,11 @@ installation. It never includes the diagnostic client.
 
 Pinned upstream function RVAs: settings predicate `43a10`, native point snapshot
 `444b0`, final hover callback `cdfb0`, map build `cc390`, close `8f390`,
-ImGui Settings tab `875b0`, and section drawer `862e0`. The settings hook calls upstream's own
+ImGui Settings tab `875b0`, section drawer `862e0`, and menu-mode getter `1bc50`.
+The getter override applies only to return address `a889b` during initialization:
+upstream's ImGui branch otherwise skips the shared attachment hook setup along
+with the native menu setup. All runtime callers retain the configured mode.
+The settings hook calls upstream's own
 `TextWrapped` (`109370`) and `Checkbox` (`10b3c0`) within that tab's active
 context. The Goblin section uses `SliderScalar` (`10dba0`, data type 8 = float,
 verified at `87744`) for the new emphasis floats. Upstream's old generic ImGui

@@ -6,6 +6,9 @@
 #include <unordered_map>
 
 namespace mfg213 {
+inline int initialization_menu_mode(int mode,uintptr_t return_rva) {
+    return mode==1 && return_rva==0xa889b ? 0 : mode;
+}
 inline constexpr char sha256[] = "ed984d5bb3ee49e304ab02e5ac1bc1bfc3a6368c2bc8743f85edefe2a73f2ea3";
 inline constexpr size_t entries_rva = 0x1d7850, entry_size = 296, entry_count = 7039;
 template<class T> T field(const void* p, size_t offset) {

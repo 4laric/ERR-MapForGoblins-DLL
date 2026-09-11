@@ -3,6 +3,13 @@
 #include <iostream>
 int main() {
     using namespace mfg213;
+    assert(initialization_menu_mode(1,0xa889b)==0);
+    for(int mode=0;mode<3;++mode) {
+        for(uintptr_t caller:{uintptr_t{0x731ca},uintptr_t{0x7a95e},uintptr_t{0x8c921},
+                             uintptr_t{0x8e6a9},uintptr_t{0xa26ca},uintptr_t{0xa26d8},uintptr_t{0xa272e}})
+            assert(initialization_menu_mode(mode,caller)==mode);
+        if(mode!=1)assert(initialization_menu_mode(mode,0xa889b)==mode);
+    }
     Identities ids{{123,{123,1,456,{1,456}}}};
     assert(find(ids,123)==find(ids,123|(uint64_t{1}<<63)));
     assert(!find(ids,124));

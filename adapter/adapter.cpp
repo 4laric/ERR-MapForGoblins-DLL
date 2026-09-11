@@ -3,6 +3,7 @@
 #include <windows.h>
 #include <bcrypt.h>
 #include <MinHook.h>
+#include <intrin.h>
 #include "release213.hpp"
 #include <atomic>
 #include <chrono>
@@ -155,6 +156,16 @@ using SliderScalar=bool(*)(const char*,int,void*,const void*,const void*,const c
 DrawSettings original_settings{};
 using DrawSection=void(*)(const void*,bool*);
 DrawSection original_section{};
+using MenuMode=int(*)();
+MenuMode original_menu_mode{};
+int menu_mode() {
+    // 2.1.3 a8896 calls this getter during hook installation. Its imgui
+    // branch skips a891c..aa0aa, including native attachMovie hooks at
+    // a9e02/aa053. Runtime callers must retain the user's actual menu mode.
+    const auto caller=reinterpret_cast<uintptr_t>(_ReturnAddress());
+    const int mode=original_menu_mode();
+    return mfg213::initialization_menu_mode(mode,caller-reinterpret_cast<uintptr_t>(upstream));
+}
 
 // Upstream's legacy ImGui section drawer has no Float case: type 6 falls
 // through to gamepad rebinding at 8716c. Render the Goblin section's newer
@@ -306,7 +317,7 @@ void load_options() {
     unsigned next=0;
     if(GetPrivateProfileIntW(L"AP",L"checks_only",1,file.c_str()))next|=1;
     if(GetPrivateProfileIntW(L"AP",L"progression_only",0,file.c_str()))next|=2;
-    if(GetPrivateProfileIntW(L"AP",L"in_logic_only",1,file.c_str()))next|=4;
+    if(GetPrivateProfileIntW(L"AP",L"in_logic_only",0,file.c_str()))next|=4;
     if(options.exchange(next)!=next) log("AP filter options reloaded");
 }
 DWORD WINAPI start(void*) {
@@ -341,7 +352,8 @@ DWORD WINAPI start(void*) {
             {0xcc390,reinterpret_cast<void*>(build),reinterpret_cast<void**>(&original_build)},
             {0x8f390,reinterpret_cast<void*>(close_map),reinterpret_cast<void**>(&original_close)},
             {0x875b0,reinterpret_cast<void*>(draw_settings),reinterpret_cast<void**>(&original_settings)},
-            {0x862e0,reinterpret_cast<void*>(draw_section),reinterpret_cast<void**>(&original_section)}};
+            {0x862e0,reinterpret_cast<void*>(draw_section),reinterpret_cast<void**>(&original_section)},
+            {0x1bc50,reinterpret_cast<void*>(menu_mode),reinterpret_cast<void**>(&original_menu_mode)}};
         for(auto& h:hooks) {
             if(MH_CreateHook(upstream+h.rva,h.hook,h.original)!=MH_OK) {
                 MH_Uninitialize(); throw std::runtime_error("Adapter hook creation failed; none enabled");
@@ -353,7 +365,7 @@ DWORD WINAPI start(void*) {
             ready.store(false); cache.set_hooks_ready(false); MH_DisableHook(MH_ALL_HOOKS);
             throw std::runtime_error("Adapter hook enable failed");
         }
-        log("Pinned 2.1.3 loaded; seven AP hooks armed, including integrated ImGui settings");
+        log("Pinned 2.1.3 loaded; eight AP hooks armed; ImGui native-attachment initialization corrected");
         // File I/O stays off render callbacks. Log only changed diagnostics.
         Diagnostic previous;bool logged=false;
         for(;;){
