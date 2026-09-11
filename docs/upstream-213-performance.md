@@ -4,7 +4,9 @@ Investigated 2026-09-11. **Partial port, not performance parity.** The supplied
 release contains a new native marker manager, not just a faster version of our
 old layout hook. This branch ports exact projection caching into our existing
 focus-highlight path. General map FPS, first-open time, and upstream's viewport
-renderer remain unverified/unported. No upstream DLL was loaded or executed.
+renderer remain unported. The supplied upstream DLL was subsequently run offline
+on a separate copy of the user's save for read-only lifecycle investigation;
+this is not yet a comparative performance or AP integration playtest.
 
 ## Inputs and reproducibility
 
@@ -100,6 +102,33 @@ AP progression rings, skip stock layout, or change AP visibility rules.
 * Live vanilla/AP frame time and visual behavior: **not tested**.
 
 ## Remaining renderer work
+
+### Live upstream observations
+
+On game version 1.17.1, the supplied 2.1.3 DLL initialized its native and fast-map
+hooks and displayed the map. The diagnostic profile uses a copied save and omits
+the AP client. ReadProcessMemory captures (no process-memory writes) found 7,166
+72-byte records at the vector rooted at RVA `669750`. In the observed stationary
+view, 104 recorded child pointers occurred in the current parent's 487-entry
+display list. This is a single view, not a universal visible-marker count.
+
+The list layout is independently supported by helper `91190`: pointer at parent
+offset `d8`, 32-bit count at `e0`, **16-byte** entries with the child pointer at
+the start. Global `669690` points to this list-bearing object; `669688` is a
+different object passed to the removal function. They must not be interchanged.
+Helper `912a0` processes collected indices in reverse, reloads the current list,
+checks the index and child membership again, then calls the function at `6707c8`
+with the other object and index. This supports safe descending removal, but does
+not establish who owns detached child allocations.
+
+Stationary upstream log samples report zero placement and emphasis-write work.
+These are upstream's own counters, not externally measured frame times, and do
+not measure the fork or prove performance parity. After map close, the vector
+end equals its begin and the parent's array/count are zero. The upstream log
+independently reports `hit=104 out=104 tracked=7166` for self-detach, matching the
+pre-close memory observation. Reopen and detached allocation ownership still
+need validation. The original AP save's SHA-256 remains identical to the
+pre-launch backup; only the separate diagnostic save was used.
 
 The main gains remain a renderer port, not a small patch. Before enabling the
 stock-refresh bypass, reconstruct the native child's ownership and creation
